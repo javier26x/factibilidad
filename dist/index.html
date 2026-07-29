@@ -856,14 +856,22 @@ td.strong { font-weight: 600; }
         <!-- modo lote -->
         <div class="field-group" data-panel-modo="lote" style="display:none">
           <div class="group-label">Pegar desde planilla</div>
-          <textarea id="lote" rows="9" placeholder="Nombre; latitud; longitud; altura
+          <textarea id="lote" rows="10" placeholder="06_109-06_331
+13_272 - 23_503
 Bodega Lampa; -33.28617; -70.87233; 24
-Nodo Los Andes; -32.83370; -70.59810
 Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
+06_109; -34.60000; -71.15000
 01_404"></textarea>
-          <p class="hint">Una fila por sitio. Cuatro coordenadas en la misma fila se leen como
-            un enlace A–B. Una sola columna se interpreta como código de un sitio de la red.
-            Acepta grados decimales o <code>18°28'23.3"S</code>.</p>
+          <p class="hint">Una fila por sitio o por enlace. Se acepta:</p>
+          <ul class="hint" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px">
+            <li><code>CODIGO_A-CODIGO_B</code> · enlace entre dos sitios de la red</li>
+            <li><code>CODIGO; lat; lon</code> · enlace de un sitio a un punto nuevo</li>
+            <li><code>nombre; lat; lon; altura</code> · sitio candidato</li>
+            <li>cuatro coordenadas en la fila · enlace A–B libre</li>
+            <li><code>CODIGO</code> solo · un sitio de la red</li>
+          </ul>
+          <p class="hint">Cada enlace trae además sus alternativas: los nodos que podrían
+            servir a cada extremo. Acepta grados decimales o <code>18°28'23.3"S</code>.</p>
           <div id="lote-errores" style="display:none"></div>
         </div>
 
@@ -973,11 +981,14 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
       </div>
 
       <h2>Fibra óptica</h2>
-      <p>La distancia en línea recta al nodo se multiplica por un factor de sinuosidad —el
-        recorrido real por calles y postación siempre es más largo que la recta— y sobre esa
-        longitud se aplica un costo por kilómetro distinto según si el nodo está en zona urbana
-        o rural. Los cuatro valores son parámetros editables; los que vienen por defecto son
-        órdenes de magnitud de planificación, no cotizaciones.</p>
+      <p>El tendido se mide sobre la red viaria: se pide el recorrido real por calles al
+        servicio de ruteo y se usa su longitud, no la recta. En la tabla, un tendido sin
+        asterisco es medido; con asterisco, estimado. Cuando el servicio no está disponible
+        —por ejemplo con los hosts externos bloqueados— se cae a la estimación clásica,
+        multiplicando la recta por un factor de sinuosidad, y la herramienta lo declara.</p>
+      <p>Sobre esa longitud se aplica un costo por kilómetro distinto según si el nodo está en
+        zona urbana o rural. Los costos y los umbrales son parámetros editables; los que vienen
+        por defecto son órdenes de magnitud de planificación, no cotizaciones.</p>
       <p>Como el dump no dice qué sitios tienen fibra, se estima con el perfil radio de cada uno:
         un sitio con 5G necesita transporte de alta capacidad y casi con certeza ya tiene fibra;
         muchas celdas LTE y emplazamiento urbano apuntan en la misma dirección; un sitio rural
@@ -1014,6 +1025,12 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         sirve para ver de entrada si un vano cruza un cordón montañoso, antes de ir a buscar
         cotas. El fondo <b>Satélite</b> muestra edificación y vegetación, que es lo que suele
         obstruir los saltos urbanos cortos. Ninguno de los dos sustituye el perfil.</p>
+
+      <h2>Alternativas</h2>
+      <p>Un vano no se evalúa solo. Para cada enlace A–B se calculan además los nodos de la red
+        que podrían servir a cada extremo, con su propio veredicto de fibra y de radio, y
+        excluyendo los dos extremos del vano. Sirve para lo que se pregunta de verdad cuando un
+        salto no cierra: contra qué otro nodo sí cerraría, o por dónde partir el salto en dos.</p>
 
       <h2>Semáforo</h2>
       <ul>
@@ -1167,17 +1184,19 @@ const REJILLA = (function () {
 })();
 
 /** Los N sitios de red más cercanos a un punto, ordenados por distancia. */
-function vecinos(lat, lon, n, excluirId) {
+function vecinos(lat, lon, n, excluir) {
+  const fuera = new Set(
+    (Array.isArray(excluir) ? excluir : [excluir]).filter(Boolean).map((x) => String(x).toUpperCase()));
   let radio = 12, cand = [];
   while (radio <= 400) {
     cand = REJILLA.cerca(lat, lon, radio);
-    if (cand.length >= n + (excluirId ? 1 : 0) + 4) break;
+    if (cand.length >= n + fuera.size + 4) break;
     radio *= 2;
   }
   if (!cand.length) cand = RED;
   const conDist = [];
   for (const s of cand) {
-    if (excluirId && s.id === excluirId) continue;
+    if (fuera.has(s.id)) continue;
     conDist.push({ sitio: s, km: haversine(lat, lon, s.lat, s.lon) });
   }
   conDist.sort((a, b) => a.km - b.km);
@@ -1457,6 +1476,78 @@ function analizarMMOO(A, B, P, cotas) {
   return { dKm, hA, hB, geo, bandas, recomendada, grade, why, inclinacion };
 }
 
+/* =========================== 3.b Ruteo por calles =========================== */
+
+/* Servicio de ruteo. Es el servidor público de demostración de OSRM: gratuito y
+   sin clave, con uso razonable esperado. Para volumen alto, apuntar esta
+   constante a una instancia propia de OSRM o Valhalla. */
+const RUTEO_URL = 'https://router.project-osrm.org/route/v1/driving';
+
+const Ruteo = (function () {
+  const cache = new Map();
+  let fallos = 0;
+  let apagado = false;                 // se apaga solo si el servicio no responde
+
+  const clave = (a, b) =>
+    `${a.lat.toFixed(5)},${a.lon.toFixed(5)}>${b.lat.toFixed(5)},${b.lon.toFixed(5)}`;
+
+  /** Decodifica una polilínea codificada de Google (precisión 5). */
+  function decodificar(txt, precision) {
+    const factor = Math.pow(10, precision || 5);
+    const salida = [];
+    let i = 0, lat = 0, lon = 0;
+    while (i < txt.length) {
+      let res = 1, desp = 0, b;
+      do { b = txt.charCodeAt(i++) - 64; res += b << desp; desp += 5; } while (b >= 0x1f);
+      lat += (res & 1) ? ~(res >> 1) : (res >> 1);
+      res = 1; desp = 0;
+      do { b = txt.charCodeAt(i++) - 64; res += b << desp; desp += 5; } while (b >= 0x1f);
+      lon += (res & 1) ? ~(res >> 1) : (res >> 1);
+      salida.push([lat / factor, lon / factor]);
+    }
+    return salida;
+  }
+
+  /**
+   * Recorrido real por la red viaria entre dos puntos. Devuelve la longitud y
+   * la traza, o null si no hay servicio o no existe camino: quien llama debe
+   * poder seguir trabajando con la estimación por sinuosidad.
+   */
+  async function ruta(a, b) {
+    if (apagado || !ESTADO.params.ruteo) return null;
+    const k = clave(a, b);
+    if (cache.has(k)) return cache.get(k);
+    try {
+      const url = `${RUTEO_URL}/${a.lon},${a.lat};${b.lon},${b.lat}` +
+                  '?overview=full&geometries=polyline&alternatives=false&steps=false';
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const j = await resp.json();
+      if (j.code !== 'Ok' || !j.routes || !j.routes.length) throw new Error(j.code || 'sin ruta');
+      const r = {
+        km: j.routes[0].distance / 1000,
+        geometria: decodificar(j.routes[0].geometry, 5),
+        fuente: 'calles',
+      };
+      cache.set(k, r);
+      fallos = 0;
+      return r;
+    } catch (e) {
+      /* tres fallos seguidos: el servicio no está disponible en este entorno */
+      if (++fallos >= 3) apagado = true;
+      cache.set(k, null);
+      return null;
+    }
+  }
+
+  return {
+    ruta,
+    decodificar,
+    get activo() { return !apagado; },
+    reactivar() { apagado = false; fallos = 0; },
+  };
+})();
+
 /* =========================== 4. Fibra óptica =========================== */
 
 /**
@@ -1484,34 +1575,42 @@ function probabilidadFO(s) {
   return { score, nivel, fuente: 'heurística' };
 }
 
-/** Trazado y costo estimado de un tendido de fibra hasta un nodo. */
-function analizarFO(candLat, candLon, nodo, P) {
+/**
+ * Trazado y costo de un tendido de fibra hasta un nodo. Si se entrega una ruta
+ * medida sobre la red viaria se usa su longitud real; si no, se estima
+ * multiplicando la recta por el factor de sinuosidad.
+ */
+function analizarFO(candLat, candLon, nodo, P, rutaMedida) {
   const km = haversine(candLat, candLon, nodo.lat, nodo.lon);
   const urbano = nodo.morfologia === 'URBANO';
-  const sinuosidad = urbano ? P.sinuosidadUrbana : P.sinuosidadRural;
-  const rutaKm = km * sinuosidad;
+  const medida = rutaMedida && Number.isFinite(rutaMedida.km) && rutaMedida.km >= km * 0.9;
+  const sinuosidad = medida ? rutaMedida.km / Math.max(0.001, km)
+                            : (urbano ? P.sinuosidadUrbana : P.sinuosidadRural);
+  const rutaKm = medida ? rutaMedida.km : km * sinuosidad;
   const costoKm = urbano ? P.costoUrbano : P.costoRural;
   const costo = rutaKm * costoKm;
   const fo = probabilidadFO(nodo);
+  const via = medida ? 'por calles' : 'estimados';
+  const traza = medida ? rutaMedida.geometria : null;
 
   let grade, why;
   if (rutaKm <= P.foVerdeKm && fo.score >= 60) {
     grade = 'ok';
-    why = `${fmt(rutaKm, 2)} km de tendido hasta ${nodo.id}, nodo con probabilidad ${fo.nivel} de fibra.`;
+    why = `${fmt(rutaKm, 2)} km de tendido ${via} hasta ${nodo.id}, nodo con probabilidad ${fo.nivel} de fibra.`;
   } else if (rutaKm <= P.foVerdeKm && fo.score >= 35) {
     grade = 'warn';
-    why = `Tendido corto (${fmt(rutaKm, 2)} km), pero hay que confirmar fibra en ${nodo.id} (probabilidad ${fo.nivel}).`;
+    why = `Tendido corto (${fmt(rutaKm, 2)} km ${via}), pero hay que confirmar fibra en ${nodo.id} (probabilidad ${fo.nivel}).`;
   } else if (rutaKm <= P.foAmbarKm && fo.score >= 35) {
     grade = 'warn';
-    why = `${fmt(rutaKm, 2)} km de tendido: viable con obra civil, sujeto a permisos y a confirmar fibra en ${nodo.id}.`;
+    why = `${fmt(rutaKm, 2)} km ${via}: viable con obra civil, sujeto a permisos y a confirmar fibra en ${nodo.id}.`;
   } else if (rutaKm <= P.foAmbarKm) {
     grade = 'bad';
-    why = `${fmt(rutaKm, 2)} km hasta un nodo con probabilidad ${fo.nivel} de fibra: costo alto frente al beneficio.`;
+    why = `${fmt(rutaKm, 2)} km ${via} hasta un nodo con probabilidad ${fo.nivel} de fibra: costo alto frente al beneficio.`;
   } else {
     grade = 'bad';
-    why = `${fmt(rutaKm, 2)} km de tendido superan el umbral de ${P.foAmbarKm} km. Resolver por radio o por un tercero.`;
+    why = `${fmt(rutaKm, 2)} km ${via} superan el umbral de ${P.foAmbarKm} km. Resolver por radio o por un tercero.`;
   }
-  return { km, rutaKm, sinuosidad, costo, costoKm, urbano, fo, grade, why, nodo };
+  return { km, rutaKm, sinuosidad, costo, costoKm, urbano, fo, grade, why, nodo, medida, traza };
 }
 
 /* =========================== 5. Análisis =========================== */
@@ -1519,8 +1618,8 @@ function analizarFO(candLat, candLon, nodo, P) {
 const PESO_GRADO = { ok: 0, warn: 1, bad: 2 };
 
 /** Evalúa un punto candidato contra los nodos de red más cercanos. */
-function analizarSitio(cand, P) {
-  const cerca = vecinos(cand.lat, cand.lon, P.nNodos, cand.id);
+function analizarSitio(cand, P, excluir) {
+  const cerca = vecinos(cand.lat, cand.lon, P.nNodos, excluir || cand.id);
   if (!cerca.length) return null;
 
   /* Las cotas de terreno se piden por vano, no por sitio: aquí el despeje se
@@ -1544,6 +1643,30 @@ function analizarSitio(cand, P) {
   });
 
   return { cand, filas, mejorFO, mejorMW };
+}
+
+/**
+ * Alternativas a un vano directo: los nodos de la red que podrían servir a cada
+ * extremo, excluyendo los propios extremos. Es lo que se mira cuando el salto
+ * A-B no cierra, o cuando cierra pero conviene comparar.
+ */
+function alternativasDeEnlace(A, B, P) {
+  const fuera = [A.id, B.id].filter(Boolean);
+  const porExtremo = [];
+  [['A', A], ['B', B]].forEach(([etiqueta, ext]) => {
+    const cerca = vecinos(ext.lat, ext.lon, Math.max(3, Math.ceil(P.nNodos / 2)), fuera);
+    cerca.forEach(({ sitio, km }) => {
+      porExtremo.push({
+        extremo: etiqueta,
+        desde: ext,
+        sitio,
+        km,
+        fo: analizarFO(ext.lat, ext.lon, sitio, P),
+        mw: analizarMMOO({ lat: ext.lat, lon: ext.lon, alt: ext.alt }, sitio, P, null),
+      });
+    });
+  });
+  return porExtremo;
 }
 
 /** Recomendación global entre fibra y radio. */
@@ -1622,6 +1745,31 @@ function partirCampos(linea) {
 }
 
 /**
+ * Reconoce un enlace escrito con los códigos de dos sitios de la red, del tipo
+ * «06_109-06_331». Ningún código del inventario contiene guiones, así que el
+ * separador no es ambiguo; se aceptan además flechas y guiones tipográficos.
+ */
+function parEnlaceDeCodigos(txt) {
+  const partes = String(txt).trim().toUpperCase()
+    .split(/\s*(?:->|=>|→|[-–—/>])\s*/).filter(Boolean);
+  if (partes.length !== 2) return null;
+  const a = byId.get(partes[0]), b = byId.get(partes[1]);
+  return a && b && a !== b ? [a, b] : null;
+}
+
+/** Los sitios de la red mencionados en una fila, por código o por par A-B. */
+function codigosDeFila(campos) {
+  const out = [];
+  campos.forEach((c) => {
+    const par = parEnlaceDeCodigos(c);
+    if (par) { out.push(par[0], par[1]); return; }
+    const s = byId.get(c.trim().toUpperCase());
+    if (s) out.push(s);
+  });
+  return out;
+}
+
+/**
  * Interpreta líneas pegadas desde una planilla. Acepta:
  *   nombre; lat; lon [; altura]
  *   nombre; latA; lonA; latB; lonB      (enlace explícito)
@@ -1636,11 +1784,45 @@ function parsearLote(texto) {
     const campos = partirCampos(bruto);
     if (!campos.length) return;
 
-    /* Sólo un campo: debe ser un código de sitio existente. */
+    /* Códigos de la red: uno solo es un sitio; dos, el enlace entre ellos. */
+    const sitios = codigosDeFila(campos);
+    const sobrantes = campos.filter((c) => !parEnlaceDeCodigos(c) && !byId.has(c.trim().toUpperCase()));
+    const numsSobrantes = sobrantes.map(parseCoord)
+      .filter((v) => v != null && Math.abs(v) >= 15 && Math.abs(v) <= 180);
+
+    if (sitios.length >= 2) {
+      const [A, B] = sitios;
+      const rotulo = sobrantes.find((c) => parseCoord(c) == null);
+      filas.push({
+        nombre: rotulo || `${A.id}–${B.id}`,
+        lat: A.lat, lon: A.lon, alt: A.alt, refA: A,
+        latB: B.lat, lonB: B.lon, altB: B.alt, refB: B,
+        linea: i + 1,
+      });
+      return;
+    }
+    /* Un código más un par de coordenadas: enlace del sitio al punto nuevo. */
+    if (sitios.length === 1 && numsSobrantes.length >= 2) {
+      const A = sitios[0];
+      const pto = ordenarLatLon(numsSobrantes[0], numsSobrantes[1]);
+      if (pto && validar(pto)) {
+        const rotulo = sobrantes.find((c) => parseCoord(c) == null);
+        filas.push({
+          nombre: rotulo || `${A.id}–punto`,
+          lat: A.lat, lon: A.lon, alt: A.alt, refA: A,
+          latB: pto.lat, lonB: pto.lon, linea: i + 1,
+        });
+        return;
+      }
+    }
+    if (sitios.length === 1 && !numsSobrantes.length) {
+      const s = sitios[0];
+      filas.push({ nombre: s.id, lat: s.lat, lon: s.lon, alt: s.alt, ref: s, linea: i + 1 });
+      return;
+    }
+
     if (campos.length === 1) {
-      const s = byId.get(campos[0].toUpperCase());
-      if (s) { filas.push({ nombre: s.id, lat: s.lat, lon: s.lon, alt: s.alt, ref: s, linea: i + 1 }); }
-      else errores.push(`Línea ${i + 1}: «${bruto}» no es un código de la red ni trae coordenadas.`);
+      errores.push(`Línea ${i + 1}: «${bruto}» no es un código de la red ni trae coordenadas.`);
       return;
     }
 
@@ -1988,15 +2170,23 @@ const Mapa = (function () {
     }
     ctx.globalAlpha = 1;
 
-    /* enlaces evaluados */
+    /* enlaces evaluados: la fibra sigue su traza real cuando se pudo medir */
     capas.enlaces.forEach((e) => {
       ctx.strokeStyle = e.medio === 'fo' ? t.fo : t.mw;
       ctx.lineWidth = e.principal ? 2 : 1;
       ctx.globalAlpha = e.principal ? 0.95 : 0.42;
-      if (e.medio === 'fo') ctx.setLineDash([5, 3]);
+      const trazada = e.traza && e.traza.length > 1;
+      if (e.medio === 'fo' && !trazada) ctx.setLineDash([5, 3]);
       ctx.beginPath();
-      ctx.moveTo(px(e.a.lon), py(e.a.lat));
-      ctx.lineTo(px(e.b.lon), py(e.b.lat));
+      if (trazada) {
+        e.traza.forEach(([la, lo], i) => {
+          const x = px(lo), y = py(la);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+      } else {
+        ctx.moveTo(px(e.a.lon), py(e.a.lat));
+        ctx.lineTo(px(e.b.lon), py(e.b.lat));
+      }
       ctx.stroke();
       ctx.setLineDash([]);
     });
@@ -2187,6 +2377,7 @@ const PARAMS_DEFECTO = {
   foAmbarKm: 8,
   bandas: BANDAS.map((b) => b.id),
   fondo: 'carto',
+  ruteo: true,
 };
 
 const ESTADO = {
@@ -2282,7 +2473,8 @@ function ejecutar() {
                    alt: parseFloat($('#alturaB').value) || P.alturaCandidato };
     const mw = analizarMMOO(extA, extB, P, cotas);
     const fo = analizarFO(extA.lat, extA.lon, extremoComoNodo(extB, P), P);
-    ESTADO.resultados = [{ tipo: 'enlace', P, A: extA, B: extB, mw, fo }];
+    ESTADO.resultados = [{ tipo: 'enlace', P, A: extA, B: extB, mw, fo,
+                           alternativas: alternativasDeEnlace(extA, extB, P) }];
   }
 
   if (modo === 'lote') {
@@ -2295,11 +2487,16 @@ function ejecutar() {
     ESTADO.resultados = filas.map((f) => {
       const P = paramsPara(f.lat, f.lon);
       if (f.latB != null) {
-        const A = { nombre: `${f.nombre} · A`, lat: f.lat, lon: f.lon, alt: f.alt || P.alturaCandidato };
-        const B = { nombre: `${f.nombre} · B`, lat: f.latB, lon: f.lonB, alt: P.alturaCandidato };
+        const A = { nombre: f.refA ? f.refA.id : `${f.nombre} · A`, lat: f.lat, lon: f.lon,
+                    alt: f.alt || P.alturaCandidato, id: f.refA ? f.refA.id : null };
+        const B = { nombre: f.refB ? f.refB.id : 'punto B', lat: f.latB, lon: f.lonB,
+                    alt: f.altB || P.alturaCandidato, id: f.refB ? f.refB.id : null };
         const mw = analizarMMOO(A, B, P, null);
-        return { tipo: 'enlace', nombre: f.nombre, P, A, B, mw,
-                 fo: analizarFO(A.lat, A.lon, extremoComoNodo(B, P), P) };
+        return {
+          tipo: 'enlace', nombre: f.nombre, P, A, B, mw,
+          fo: analizarFO(A.lat, A.lon, extremoComoNodo(B, P), P),
+          alternativas: alternativasDeEnlace(A, B, P),
+        };
       }
       const cand = { nombre: f.nombre, lat: f.lat, lon: f.lon,
                      alt: f.alt || P.alturaCandidato, cotas: null, id: f.ref ? f.ref.id : null };
@@ -2312,6 +2509,84 @@ function ejecutar() {
 
   ESTADO.seleccion = 0;
   render();
+  medirTendidos();
+}
+
+/* ---- medición del tendido por la red viaria ---- */
+
+/* Cada análisis lleva un testigo: si el usuario lanza otro mientras las rutas
+   viajan, las respuestas viejas se descartan en vez de pisar la pantalla. */
+let testigoRutas = 0;
+
+async function enLotes(items, tamano, fn) {
+  for (let i = 0; i < items.length; i += tamano) {
+    await Promise.all(items.slice(i, i + tamano).map(fn));
+  }
+}
+
+/**
+ * Sustituye las longitudes estimadas por las medidas sobre calles. Corre
+ * después de pintar, así el veredicto aparece de inmediato y se afina solo.
+ */
+async function medirTendidos() {
+  if (!ESTADO.params.ruteo || !Ruteo.activo) return;
+  const mio = ++testigoRutas;
+  const pendientes = [];
+
+  ESTADO.resultados.forEach((res) => {
+    if (res.tipo === 'sitio') {
+      /* el resultado en pantalla se mide entero; los demás, sólo su mejor nodo */
+      const activo = res === ESTADO.resultados[Math.min(ESTADO.seleccion, ESTADO.resultados.length - 1)];
+      const objetivo = activo ? res.filas : [res.mejorFO];
+      objetivo.forEach((fila) => pendientes.push({
+        a: res.cand, b: fila.sitio, P: res.P,
+        aplicar: (r) => { fila.fo = analizarFO(res.cand.lat, res.cand.lon, fila.sitio, res.P, r); },
+      }));
+    } else {
+      pendientes.push({
+        a: res.A, b: res.B, P: res.P,
+        aplicar: (r) => { res.fo = analizarFO(res.A.lat, res.A.lon, extremoComoNodo(res.B, res.P), res.P, r); },
+      });
+      (res.alternativas || []).forEach((alt) => pendientes.push({
+        a: alt.desde, b: alt.sitio, P: res.P,
+        aplicar: (r) => { alt.fo = analizarFO(alt.desde.lat, alt.desde.lon, alt.sitio, res.P, r); },
+      }));
+    }
+  });
+
+  if (!pendientes.length) return;
+  let medidas = 0;
+  await enLotes(pendientes, 3, async (t) => {
+    const r = await Ruteo.ruta(t.a, t.b);
+    if (mio !== testigoRutas) return;          // llegó tarde: otro análisis manda
+    if (r) { t.aplicar(r); medidas++; }
+  });
+  if (mio !== testigoRutas) return;
+
+  if (medidas) {
+    /* medir puede cambiar cuál nodo es el mejor por fibra */
+    ESTADO.resultados.forEach((res) => {
+      if (res.tipo !== 'sitio') return;
+      res.mejorFO = res.filas.reduce((a, b) =>
+        PESO_GRADO[b.fo.grade] < PESO_GRADO[a.fo.grade] ||
+        (b.fo.grade === a.fo.grade && b.fo.rutaKm < a.fo.rutaKm) ? b : a);
+    });
+    render();
+  }
+  avisarRuteo(medidas, pendientes.length);
+}
+
+function avisarRuteo(medidas, total) {
+  const el = $('#estado-ruteo');
+  if (!el) return;
+  if (!ESTADO.params.ruteo) { el.textContent = 'Tendidos estimados por sinuosidad (ruteo desactivado).'; return; }
+  if (!medidas) {
+    el.textContent = 'Tendidos estimados por sinuosidad: no hubo respuesta del servicio de ruteo.';
+  } else if (medidas < total) {
+    el.textContent = `${medidas} de ${total} tendidos medidos por calles; el resto, estimados (*).`;
+  } else {
+    el.textContent = `${medidas} tendidos medidos sobre la red viaria.`;
+  }
 }
 
 /* ---- render ---- */
@@ -2356,7 +2631,7 @@ function renderSitio(res) {
       <p class="because">${f.why}</p>
       <div class="kv">
         <div><span class="k">Línea recta</span><span class="v">${fmt(f.km, 2)} km</span></div>
-        <div><span class="k">Sinuosidad</span><span class="v">×${fmt(f.sinuosidad, 2)}</span></div>
+        <div><span class="k">${f.medida ? 'Sinuosidad real' : 'Sinuosidad'}</span><span class="v">×${fmt(f.sinuosidad, 2)}</span></div>
         <div><span class="k">Costo estimado</span><span class="v">USD ${fmtMiles(f.costo)}</span></div>
         <div><span class="k">FO en nodo</span><span class="v">${f.fo.nivel} (${f.fo.score})</span></div>
       </div>
@@ -2399,6 +2674,7 @@ function renderSitio(res) {
         <h3>Nodos de red evaluados</h3>
         <div class="spacer"></div>
         <span class="hint">${filas.length} más cercanos · clic para ver el vano</span>
+        <span class="hint" id="estado-ruteo"></span>
         <button class="ghost" id="csv-nodos">Exportar CSV</button>
       </div>
       <div class="tablewrap">
@@ -2424,7 +2700,7 @@ function renderSitio(res) {
     candidatos: [{ lat: cand.lat, lon: cand.lon, nombre: cand.nombre, grade: rec.grade }],
     nodos: res.filas.map((r) => r.sitio),
     enlaces: [
-      { a: cand, b: f.nodo, medio: 'fo', principal: true },
+      { a: cand, b: f.nodo, medio: 'fo', principal: true, traza: f.traza },
       { a: cand, b: mejorMW.sitio, medio: 'mw', principal: true },
       ...res.filas.filter((r) => r.sitio !== f.nodo && r.sitio !== mejorMW.sitio)
         .map((r) => ({ a: cand, b: r.sitio, medio: 'mw', principal: false })),
@@ -2464,7 +2740,7 @@ function filaNodo(r, cand, i) {
     <td class="num">${s.alt ? fmt(s.alt, 0) : '—'}</td>
     <td><span class="techs">${tecs}</span></td>
     <td><span class="dot ${f.grade}"></span>${f.fo.nivel}</td>
-    <td class="num">${fmt(f.rutaKm, 2)}</td>
+    <td class="num">${fmt(f.rutaKm, 2)}${f.medida ? '' : '*'}</td>
     <td class="num">${fmtMiles(f.costo)}</td>
     <td><span class="dot ${m.grade}"></span>${ETIQUETA[m.grade]}</td>
     <td>${m.recomendada ? m.recomendada.banda.id : '—'}</td>
@@ -2472,6 +2748,46 @@ function filaNodo(r, cand, i) {
     <td class="num">${m.recomendada ? fmtDisp(m.recomendada.disponibilidad) : '—'}</td>
     <td class="num">${m.recomendada ? `${fmt(m.recomendada.margen, 1)} dB` : '—'}</td>
   </tr>`;
+}
+
+/** Fila de la tabla de alternativas de un enlace. */
+function filaAlternativa(r) {
+  const s = r.sitio, m = r.mw, f = r.fo;
+  const az = azimut(r.desde.lat, r.desde.lon, s.lat, s.lon);
+  return `<tr>
+    <td class="strong">${r.extremo}</td>
+    <td class="num strong">${fmt(r.km, 2)}</td>
+    <td class="strong">${esc(s.id)}</td>
+    <td class="name">${esc(s.nombre)}</td>
+    <td>${esc(s.comuna || '—')}</td>
+    <td class="num">${fmt(az, 0)}° ${rumbo(az)}</td>
+    <td class="num">${s.alt ? fmt(s.alt, 0) : '—'}</td>
+    <td><span class="techs">${TECH_BITS.map(([t, b]) =>
+      `<span class="${s.techMask & b ? 'on' : ''}">${t}</span>`).join('')}</span></td>
+    <td><span class="dot ${f.grade}"></span>${f.fo.nivel}</td>
+    <td class="num">${fmt(f.rutaKm, 2)}${f.medida ? '' : '*'}</td>
+    <td class="num">${fmtMiles(f.costo)}</td>
+    <td><span class="dot ${m.grade}"></span>${ETIQUETA[m.grade]}</td>
+    <td>${m.recomendada ? m.recomendada.banda.id : '—'}</td>
+    <td class="num">${m.recomendada ? fmtAnt(m.recomendada.antena) : '—'}</td>
+    <td class="num">${m.recomendada ? fmtDisp(m.recomendada.disponibilidad) : '—'}</td>
+  </tr>`;
+}
+
+function exportarAlternativas(res, alts) {
+  const cab = ['extremo', 'desde', 'nodo', 'nombre_nodo', 'comuna', 'region', 'dist_km', 'azimut',
+    'alt_ant_nodo', 'tecnologias', 'fo_prob', 'fo_tendido_km', 'fo_ruta', 'fo_costo_usd',
+    'fo_veredicto', 'mw_veredicto', 'mw_banda', 'mw_antena_m', 'mw_disponibilidad_pct'];
+  const filas = alts.map((r) => {
+    const s = r.sitio, m = r.mw, f = r.fo, rec = m.recomendada;
+    return [r.extremo, r.desde.nombre || r.desde.id, s.id, s.nombre, s.comuna, s.region,
+      dec(r.km, 3), dec(azimut(r.desde.lat, r.desde.lon, s.lat, s.lon), 1), dec(s.alt, 0),
+      techList(s.techMask).join('+'), f.fo.nivel, dec(f.rutaKm, 3),
+      f.medida ? 'calles' : 'estimada', Math.round(f.costo), ETIQUETA[f.grade],
+      ETIQUETA[m.grade], rec ? rec.banda.id : '', rec ? dec(rec.antena, 1) : '',
+      rec ? dec(rec.disponibilidad, 4) : ''];
+  });
+  bajar(`alternativas_${slug(res.nombre || res.A.nombre)}.csv`, csv([cab, ...filas]));
 }
 
 function enlazarTabla(res) {
@@ -2494,7 +2810,10 @@ function enlazarTabla(res) {
       Mapa.fijar({
         candidatos: [{ lat: res.cand.lat, lon: res.cand.lon, nombre: res.cand.nombre, grade: fila.mw.grade }],
         nodos: [fila.sitio],
-        enlaces: [{ a: res.cand, b: fila.sitio, medio: 'mw', principal: true }],
+        enlaces: [
+          { a: res.cand, b: fila.sitio, medio: 'mw', principal: true },
+          { a: res.cand, b: fila.sitio, medio: 'fo', principal: false, traza: fila.fo.traza },
+        ],
       });
     });
   });
@@ -2723,35 +3042,42 @@ function renderEnlace(res) {
       </div>
     </article>`;
 
-  const cercaA = vecinos(A.lat, A.lon, 3);
-  const cercaB = vecinos(B.lat, B.lon, 3);
+  const alts = res.alternativas || alternativasDeEnlace(A, B, P);
+  const viables = alts.filter((x) => x.fo.grade !== 'bad' || x.mw.grade !== 'bad');
   $('#detalle').innerHTML = `
     ${panelVano(A, B, mw, P)}
     <div class="panel">
-      <div class="panel-head"><h3>Nodos de red próximos a cada extremo</h3>
-        <div class="spacer"></div><span class="hint">para agregación o para partir el salto</span></div>
-      <div class="tablewrap"><table>
-        <thead><tr><th>Extremo</th><th class="num">Dist.</th><th>Código</th><th>Nombre</th>
-          <th>Comuna</th><th class="num">Alt.</th><th>Tec.</th><th>FO probable</th></tr></thead>
-        <tbody>${[['A', A, cercaA], ['B', B, cercaB]].flatMap(([et, ext, lista]) =>
-          lista.map(({ sitio, km }) => {
-            const p = probabilidadFO(sitio);
-            return `<tr><td class="strong">${et}</td><td class="num">${fmt(km, 2)}</td>
-              <td class="strong">${esc(sitio.id)}</td><td class="name">${esc(sitio.nombre)}</td>
-              <td>${esc(sitio.comuna || '—')}</td><td class="num">${sitio.alt ? fmt(sitio.alt, 0) : '—'}</td>
-              <td><span class="techs">${TECH_BITS.map(([t, b]) =>
-                `<span class="${sitio.techMask & b ? 'on' : ''}">${t}</span>`).join('')}</span></td>
-              <td><span class="dot ${p.score >= 60 ? 'ok' : p.score >= 35 ? 'warn' : 'bad'}"></span>${p.nivel}</td></tr>`;
-          })).join('')}</tbody>
+      <div class="panel-head"><h3>Alternativas al vano directo</h3>
+        <div class="spacer"></div>
+        <span class="hint">${viables.length} de ${alts.length} con algún medio viable</span>
+        <span class="hint" id="estado-ruteo"></span>
+        <button class="ghost" id="csv-alternativas">Exportar CSV</button>
+      </div>
+      <div class="tablewrap"><table class="dense">
+        <thead><tr>
+          <th>Extremo</th><th class="num">km</th><th>Código</th><th>Nombre</th><th>Comuna</th>
+          <th class="num">Az.</th><th class="num">Alt.</th><th>Tec.</th>
+          <th>FO</th><th class="num">FO km</th><th class="num">USD</th>
+          <th>MMOO</th><th>Banda</th><th class="num">Ant.</th><th class="num">Disp.</th>
+        </tr></thead>
+        <tbody>${alts.slice().sort((a, b) => (a.extremo === b.extremo ? a.km - b.km
+          : a.extremo.localeCompare(b.extremo))).map(filaAlternativa).join('')}</tbody>
       </table></div>
     </div>`;
+  const btnAlt = $('#csv-alternativas');
+  if (btnAlt) btnAlt.addEventListener('click', () => exportarAlternativas(res, alts));
 
   dibujarPerfil(mw, A, B);
   Mapa.fijar({
     candidatos: [{ lat: A.lat, lon: A.lon, nombre: A.nombre, grade: mw.grade },
                  { lat: B.lat, lon: B.lon, nombre: B.nombre, grade: mw.grade }],
-    nodos: [...cercaA, ...cercaB].map((v) => v.sitio),
-    enlaces: [{ a: A, b: B, medio: 'mw', principal: true }],
+    nodos: alts.map((x) => x.sitio),
+    enlaces: [
+      { a: A, b: B, medio: 'mw', principal: true },
+      { a: A, b: B, medio: 'fo', principal: false, traza: fo.traza },
+      ...alts.filter((x) => x.mw.grade !== 'bad')
+        .map((x) => ({ a: x.desde, b: x.sitio, medio: 'mw', principal: false })),
+    ],
   });
   Mapa.encuadrarEn([A, B], 0.6);
 }
@@ -2840,14 +3166,15 @@ function bajar(nombre, texto) {
 
 function exportarNodos(res) {
   const cab = ['candidato', 'lat_cand', 'lon_cand', 'nodo', 'nombre_nodo', 'comuna', 'region',
-    'dist_km', 'azimut', 'alt_ant_nodo', 'tecnologias', 'fo_prob', 'fo_tendido_km', 'fo_costo_usd',
+    'dist_km', 'azimut', 'alt_ant_nodo', 'tecnologias', 'fo_prob', 'fo_tendido_km', 'fo_ruta', 'fo_costo_usd',
     'fo_veredicto', 'mw_veredicto', 'mw_banda', 'mw_antena_m', 'mw_modulacion', 'mw_margen_db',
     'mw_disponibilidad_pct', 'mw_min_ano', 'despeje_req_m', 'despeje_disp_m'];
   const filas = res.filas.map((r) => {
     const m = r.mw, f = r.fo, s = r.sitio, rec = m.recomendada;
     return [res.cand.nombre, dec(res.cand.lat, 6), dec(res.cand.lon, 6), s.id, s.nombre, s.comuna, s.region,
       dec(r.km, 3), dec(azimut(res.cand.lat, res.cand.lon, s.lat, s.lon), 1), dec(s.alt, 0),
-      techList(s.techMask).join('+'), f.fo.nivel, dec(f.rutaKm, 3), Math.round(f.costo),
+      techList(s.techMask).join('+'), f.fo.nivel, dec(f.rutaKm, 3),
+      f.medida ? 'calles' : 'estimada', Math.round(f.costo),
       ETIQUETA[f.grade], ETIQUETA[m.grade], rec ? rec.banda.id : '', rec ? dec(rec.antena, 1) : '',
       rec ? rec.mod.nombre : '', rec ? dec(rec.margen, 1) : '',
       rec ? dec(rec.disponibilidad, 4) : '', rec ? Math.round(rec.minutosAnio) : '',
@@ -2969,7 +3296,8 @@ const CAMPOS_PARAM = [
     ['R001', 'Tasa de lluvia R0,01 manual (mm/h)', 'number', { min: 0, max: 120, step: 1 }],
   ]],
   ['Fibra óptica', [
-    ['sinuosidadUrbana', 'Sinuosidad urbana', 'number', { min: 1, max: 2.5, step: 0.05 }],
+    ['ruteo', 'Medir el tendido por calles (OSRM)', 'check', {}],
+    ['sinuosidadUrbana', 'Sinuosidad urbana (si no hay ruteo)', 'number', { min: 1, max: 2.5, step: 0.05 }],
     ['sinuosidadRural', 'Sinuosidad rural', 'number', { min: 1, max: 2.5, step: 0.05 }],
     ['costoUrbano', 'Costo urbano (USD/km)', 'number', { min: 0, max: 500000, step: 1000 }],
     ['costoRural', 'Costo rural (USD/km)', 'number', { min: 0, max: 500000, step: 1000 }],
@@ -3091,7 +3419,8 @@ function ejecutarSilencioso() {
       const P = paramsPara((r.A.lat + r.B.lat) / 2, (r.A.lon + r.B.lon) / 2);
       const mw = analizarMMOO(r.A, r.B, P, null);
       return Object.assign({}, r, { P, mw,
-        fo: analizarFO(r.A.lat, r.A.lon, extremoComoNodo(r.B, P), P) });
+        fo: analizarFO(r.A.lat, r.A.lon, extremoComoNodo(r.B, P), P),
+        alternativas: alternativasDeEnlace(r.A, r.B, P) });
     }
     const P = paramsPara(r.cand.lat, r.cand.lon);
     const nuevo = analizarSitio(r.cand, P);
@@ -3177,13 +3506,14 @@ function arrancar() {
   $('#ejemplo').addEventListener('click', () => {
     setModo('lote');
     $('#lote').value = [
+      '06_109-06_331',
+      '13_272 - 23_503',
       'Bodega Lampa; -33.28617; -70.87233; 24',
-      'Planta Til Til; -33.08120; -70.92750',
       'Radio Base Curacaví; -33.40560; -71.14210; 36',
-      'Nodo Los Andes; -32.83370; -70.59810',
       'Cliente Chicureo; -33.29850; -70.66800; 18',
       'Faena Los Bronces; -33.14400; -70.28600; 40',
       'Enlace Puerto Montt; -41.46930; -72.94240; -41.32180; -72.98600',
+      '06_109; -34.60000; -71.15000',
     ].join('\n');
     ejecutar();
   });

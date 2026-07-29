@@ -44,9 +44,21 @@ trabajo:
 | **Enlace A–B** | dos extremos y, si se tienen, las cotas del terreno | balance completo del vano banda por banda y despeje resuelto con holgura numérica |
 | **Lote** | filas pegadas desde una planilla | una tabla con el veredicto de cada entrada, exportable a CSV |
 
-El formato de lote acepta `nombre; lat; lon [; altura]`, cuatro coordenadas en una fila para
-un enlace A–B, o una sola columna con el código de un sitio ya existente. Las coordenadas
-pueden ir en grados decimales o en grados/minutos/segundos (`18°28'23.3"S`).
+El formato de lote acepta, una fila por sitio o por enlace:
+
+| Se pega | Se interpreta |
+| --- | --- |
+| `06_109-06_331` | enlace entre dos sitios de la red (también con espacios, `–`, `→` o `/`) |
+| `06_109; -34.60; -71.15` | enlace de un sitio de la red a un punto nuevo |
+| `nombre; lat; lon; altura` | sitio candidato |
+| `nombre; latA; lonA; latB; lonB` | enlace A–B libre |
+| `01_404` | un sitio de la red |
+
+Ningún código del inventario contiene guiones, así que el separador de `A-B` no es ambiguo.
+Las coordenadas pueden ir en grados decimales o en grados/minutos/segundos (`18°28'23.3"S`).
+
+Cada enlace se evalúa con sus **alternativas**: los nodos de la red que podrían servir a cada
+extremo, con veredicto propio de fibra y de radio, excluidos los dos extremos del vano.
 
 En el mapa: clic en un sitio para cargarlo como punto de análisis, clic en vacío para fijar
 un candidato, rueda para acercar, arrastrar para desplazar.
@@ -74,10 +86,16 @@ OpenStreetMap, CARTO, OpenTopoMap y Esri.
 
 ## Qué calcula
 
-**Fibra óptica.** Distancia al nodo multiplicada por un factor de sinuosidad, con costo por
-kilómetro distinto según morfología urbana o rural. Los umbrales de kilómetros y los costos
-son parámetros editables; los valores por defecto son órdenes de magnitud de planificación,
-no cotizaciones.
+**Fibra óptica.** El tendido se mide por el recorrido real sobre calles, pidiéndolo al
+servicio de ruteo de OSRM, y se dibuja su traza en el mapa. Si el servicio no responde se cae
+a la estimación clásica —recta por un factor de sinuosidad— y se marca con asterisco en la
+tabla. Sobre la longitud se aplica un costo por kilómetro según morfología urbana o rural.
+Umbrales y costos son parámetros editables; los valores por defecto son órdenes de magnitud
+de planificación, no cotizaciones.
+
+El ruteo usa el servidor público de demostración de OSRM, gratuito y sin clave, pensado para
+uso razonable. Para volumen alto, apuntar la constante `RUTEO_URL` de `web/app.js` a una
+instancia propia de OSRM o Valhalla. Se puede desactivar en Parámetros.
 
 **Microondas.** Para cada banda de 7 a 38 GHz y para E-band: pérdida en espacio libre,
 absorción atmosférica, ganancia de antena y umbral de recepción según la modulación mínima

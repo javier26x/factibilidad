@@ -80,14 +80,22 @@
         <!-- modo lote -->
         <div class="field-group" data-panel-modo="lote" style="display:none">
           <div class="group-label">Pegar desde planilla</div>
-          <textarea id="lote" rows="9" placeholder="Nombre; latitud; longitud; altura
+          <textarea id="lote" rows="10" placeholder="06_109-06_331
+13_272 - 23_503
 Bodega Lampa; -33.28617; -70.87233; 24
-Nodo Los Andes; -32.83370; -70.59810
 Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
+06_109; -34.60000; -71.15000
 01_404"></textarea>
-          <p class="hint">Una fila por sitio. Cuatro coordenadas en la misma fila se leen como
-            un enlace A–B. Una sola columna se interpreta como código de un sitio de la red.
-            Acepta grados decimales o <code>18°28'23.3"S</code>.</p>
+          <p class="hint">Una fila por sitio o por enlace. Se acepta:</p>
+          <ul class="hint" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px">
+            <li><code>CODIGO_A-CODIGO_B</code> · enlace entre dos sitios de la red</li>
+            <li><code>CODIGO; lat; lon</code> · enlace de un sitio a un punto nuevo</li>
+            <li><code>nombre; lat; lon; altura</code> · sitio candidato</li>
+            <li>cuatro coordenadas en la fila · enlace A–B libre</li>
+            <li><code>CODIGO</code> solo · un sitio de la red</li>
+          </ul>
+          <p class="hint">Cada enlace trae además sus alternativas: los nodos que podrían
+            servir a cada extremo. Acepta grados decimales o <code>18°28'23.3"S</code>.</p>
           <div id="lote-errores" style="display:none"></div>
         </div>
 
@@ -197,11 +205,14 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
       </div>
 
       <h2>Fibra óptica</h2>
-      <p>La distancia en línea recta al nodo se multiplica por un factor de sinuosidad —el
-        recorrido real por calles y postación siempre es más largo que la recta— y sobre esa
-        longitud se aplica un costo por kilómetro distinto según si el nodo está en zona urbana
-        o rural. Los cuatro valores son parámetros editables; los que vienen por defecto son
-        órdenes de magnitud de planificación, no cotizaciones.</p>
+      <p>El tendido se mide sobre la red viaria: se pide el recorrido real por calles al
+        servicio de ruteo y se usa su longitud, no la recta. En la tabla, un tendido sin
+        asterisco es medido; con asterisco, estimado. Cuando el servicio no está disponible
+        —por ejemplo con los hosts externos bloqueados— se cae a la estimación clásica,
+        multiplicando la recta por un factor de sinuosidad, y la herramienta lo declara.</p>
+      <p>Sobre esa longitud se aplica un costo por kilómetro distinto según si el nodo está en
+        zona urbana o rural. Los costos y los umbrales son parámetros editables; los que vienen
+        por defecto son órdenes de magnitud de planificación, no cotizaciones.</p>
       <p>Como el dump no dice qué sitios tienen fibra, se estima con el perfil radio de cada uno:
         un sitio con 5G necesita transporte de alta capacidad y casi con certeza ya tiene fibra;
         muchas celdas LTE y emplazamiento urbano apuntan en la misma dirección; un sitio rural
@@ -238,6 +249,12 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         sirve para ver de entrada si un vano cruza un cordón montañoso, antes de ir a buscar
         cotas. El fondo <b>Satélite</b> muestra edificación y vegetación, que es lo que suele
         obstruir los saltos urbanos cortos. Ninguno de los dos sustituye el perfil.</p>
+
+      <h2>Alternativas</h2>
+      <p>Un vano no se evalúa solo. Para cada enlace A–B se calculan además los nodos de la red
+        que podrían servir a cada extremo, con su propio veredicto de fibra y de radio, y
+        excluyendo los dos extremos del vano. Sirve para lo que se pregunta de verdad cuando un
+        salto no cierra: contra qué otro nodo sí cerraría, o por dónde partir el salto en dos.</p>
 
       <h2>Semáforo</h2>
       <ul>
