@@ -34,10 +34,12 @@ jobs:
       - name: Construir dist/
         run: python3 tools/build_web.py
 
-      - name: Habilitar Pages si aún no lo está
+      # Pages debe estar habilitado una vez desde Settings › Pages con
+      # Source = GitHub Actions. El GITHUB_TOKEN no puede crear el sitio por
+      # API (requiere permiso de administración del repositorio), así que este
+      # paso sólo lee la configuración existente.
+      - name: Leer configuración de Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Subir el sitio
         uses: actions/upload-pages-artifact@v3

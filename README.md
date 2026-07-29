@@ -19,6 +19,11 @@ El workflow `.github/workflows/pages.yml` reconstruye `dist/` desde las fuentes 
 en GitHub Pages en cada push a la rama por defecto. No hay build step que instalar: sólo
 Python de la biblioteca estándar.
 
+Requiere habilitar Pages una vez: **Settings › Pages › Source: GitHub Actions**. El
+`GITHUB_TOKEN` de Actions no puede crear el sitio por API —ese endpoint exige permiso de
+administración del repositorio, que no se concede desde el bloque `permissions:`—, así que
+ese primer clic es manual. Después de eso cada push despliega solo.
+
 Para servirlo en Firebase Hosting en su lugar, el repo ya trae `firebase.json` apuntando a
 `dist/`:
 
