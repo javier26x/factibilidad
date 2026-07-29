@@ -51,6 +51,27 @@ pueden ir en grados decimales o en grados/minutos/segundos (`18°28'23.3"S`).
 En el mapa: clic en un sitio para cargarlo como punto de análisis, clic en vacío para fijar
 un candidato, rueda para acercar, arrastrar para desplazar.
 
+### Fondos cartográficos
+
+Cinco opciones, todas gratuitas y sin clave de API:
+
+| Fondo | Fuente | Para qué |
+| --- | --- | --- |
+| Mapa claro/oscuro | CARTO sobre OpenStreetMap | por defecto; sigue el tema y deja que los vanos resalten |
+| Calles | OpenStreetMap | callejero con más detalle de nombres |
+| Topográfico | OpenTopoMap | curvas de nivel y relieve, para ver si un vano cruza un cordón |
+| Satélite | Esri World Imagery | edificación y vegetación, lo que obstruye los saltos urbanos |
+| Sin fondo | — | sólo retícula y sitios |
+
+La capa de teselas está escrita sobre el mismo canvas que el resto del mapa, sin Leaflet ni
+otra dependencia: el lienzo ya trabaja en Web Mercator, así que basta convertir la escala al
+nivel de zoom del esquema estándar de teselas. Si las teselas no se pueden cargar —por
+ejemplo bajo una política que bloquee hosts externos— el mapa cae solo a la vista de retícula
+y lo indica, sin perder ninguna de las capas de análisis.
+
+El crédito de la fuente se muestra siempre sobre el mapa, como exigen las licencias de
+OpenStreetMap, CARTO, OpenTopoMap y Esri.
+
 ## Qué calcula
 
 **Fibra óptica.** Distancia al nodo multiplicada por un factor de sinuosidad, con costo por

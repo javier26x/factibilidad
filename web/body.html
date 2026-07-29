@@ -127,10 +127,15 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
             <div class="spacer"></div>
             <span class="hint">clic en un sitio para cargarlo · clic en vacío para fijar el candidato ·
               rueda para acercar</span>
+            <label class="field" style="flex-direction:row;align-items:center;gap:6px">
+              <span class="sr">Fondo cartográfico</span>
+              <select id="fondo" style="width:auto"></select>
+            </label>
           </div>
           <div class="mapwrap">
             <canvas id="map"></canvas>
             <div class="map-readout" id="map-readout"></div>
+            <div class="map-credito" id="map-credito"></div>
             <div class="map-legend">
               <span><span class="dot" style="background:var(--mw)"></span>sitio con 5G</span>
               <span><span class="dot" style="background:var(--ink-3)"></span>sitio 2G/3G/LTE</span>
@@ -229,6 +234,10 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         declaradas alcanzarían en terreno plano, y lo dice: el veredicto queda condicionado a
         perfil. Con las tres cotas cargadas —extremo A, extremo B y obstáculo— el despeje se
         resuelve con holgura numérica y el veredicto pasa a ser una conclusión.</p>
+      <p>El fondo <b>Topográfico</b> del mapa trae curvas de nivel y sombreado de relieve:
+        sirve para ver de entrada si un vano cruza un cordón montañoso, antes de ir a buscar
+        cotas. El fondo <b>Satélite</b> muestra edificación y vegetación, que es lo que suele
+        obstruir los saltos urbanos cortos. Ninguno de los dos sustituye el perfil.</p>
 
       <h2>Semáforo</h2>
       <ul>

@@ -653,11 +653,21 @@ td.strong { font-weight: 600; }
   pointer-events: none;
   white-space: pre;
 }
-.map-tools {
+/* crédito de la fuente cartográfica: exigido por las licencias de OSM,
+   CARTO, OpenTopoMap y Esri */
+.map-credito {
   position: absolute;
-  right: 12px; bottom: 12px;
-  display: flex;
-  gap: 6px;
+  right: 0; bottom: 0;
+  visibility: hidden;
+  max-width: 70%;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-top-left-radius: 3px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  pointer-events: none;
+  text-align: right;
 }
 
 /* ============================ perfil geométrico ============================ */
@@ -885,10 +895,15 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
             <div class="spacer"></div>
             <span class="hint">clic en un sitio para cargarlo · clic en vacío para fijar el candidato ·
               rueda para acercar</span>
+            <label class="field" style="flex-direction:row;align-items:center;gap:6px">
+              <span class="sr">Fondo cartográfico</span>
+              <select id="fondo" style="width:auto"></select>
+            </label>
           </div>
           <div class="mapwrap">
             <canvas id="map"></canvas>
             <div class="map-readout" id="map-readout"></div>
+            <div class="map-credito" id="map-credito"></div>
             <div class="map-legend">
               <span><span class="dot" style="background:var(--mw)"></span>sitio con 5G</span>
               <span><span class="dot" style="background:var(--ink-3)"></span>sitio 2G/3G/LTE</span>
@@ -987,6 +1002,10 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         declaradas alcanzarían en terreno plano, y lo dice: el veredicto queda condicionado a
         perfil. Con las tres cotas cargadas —extremo A, extremo B y obstáculo— el despeje se
         resuelve con holgura numérica y el veredicto pasa a ser una conclusión.</p>
+      <p>El fondo <b>Topográfico</b> del mapa trae curvas de nivel y sombreado de relieve:
+        sirve para ver de entrada si un vano cruza un cordón montañoso, antes de ir a buscar
+        cotas. El fondo <b>Satélite</b> muestra edificación y vegetación, que es lo que suele
+        obstruir los saltos urbanos cortos. Ninguno de los dos sustituye el perfil.</p>
 
       <h2>Semáforo</h2>
       <ul>
@@ -1654,12 +1673,63 @@ function regionDe(lat, lon) {
 
 /* =========================== 7. Mapa =========================== */
 
+/**
+ * Fondos cartográficos, todos gratuitos y sin clave de API.
+ *   velo: opacidad del velo del color de fondo sobre las teselas. Apaga el
+ *         basemap lo justo para que los vanos y los puntos sigan leyéndose.
+ *   El crédito es obligatorio por licencia en todos ellos.
+ */
+const FONDOS = [
+  {
+    id: 'carto', nombre: 'Mapa claro/oscuro',
+    url: {
+      claro: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      oscuro: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    },
+    subs: ['a', 'b', 'c', 'd'], retina: true, maxZ: 19, velo: 0,
+    credito: '© OpenStreetMap · © CARTO',
+  },
+  {
+    id: 'osm', nombre: 'Calles (OSM)',
+    url: { claro: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+    maxZ: 19, velo: 0.12,
+    credito: '© OpenStreetMap',
+  },
+  {
+    id: 'topo', nombre: 'Topográfico',
+    url: { claro: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png' },
+    subs: ['a', 'b', 'c'], maxZ: 17, velo: 0.10,
+    credito: '© OpenStreetMap · SRTM · OpenTopoMap (CC-BY-SA)',
+  },
+  {
+    id: 'sat', nombre: 'Satélite',
+    url: { claro: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
+    maxZ: 19, velo: 0.28,
+    credito: 'Esri · Maxar · Earthstar Geographics',
+  },
+  { id: 'ninguno', nombre: 'Sin fondo', url: null, maxZ: 19, velo: 0, credito: '' },
+];
+
+const fondoPorId = (id) => FONDOS.find((f) => f.id === id) || FONDOS[0];
+
+function temaOscuro() {
+  const t = document.documentElement.getAttribute('data-theme');
+  if (t === 'dark') return true;
+  if (t === 'light') return false;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
 const Mapa = (function () {
   let cv, ctx, W = 0, H = 0, dpr = 1;
   let escala = 1, cx = 0, cy = 0;            // centro en coordenadas Mercator
   let capas = { candidatos: [], enlaces: [], foco: null };
   let hover = null;
   let listo = false;
+  let fondo = fondoPorId('carto');
+  const teselas = new Map();                 // "z/x/y" -> {img, estado}
+  let usadas = new Set();
+  let fallos = 0, aciertos = 0;
+  let repintarPedido = false;
 
   const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + rad(lat) / 2));
   const mercLat = (y) => deg(2 * Math.atan(Math.exp(y)) - Math.PI / 2);
@@ -1683,6 +1753,97 @@ const Mapa = (function () {
   const py = (lat) => H / 2 - (mercY(lat) - cy) * escala;
   const lonDe = (x) => deg(cx + (x - W / 2) / escala);
   const latDe = (y) => mercLat(cy - (y - H / 2) / escala);
+
+  /* ---------------- capa de teselas ----------------
+     El canvas ya está en Web Mercator, así que basta convertir escala (píxeles
+     por radián de longitud) al nivel de zoom del esquema de teselas: el mundo
+     completo mide 2π·escala píxeles y 256·2^z en el esquema estándar. */
+  const TAU = Math.PI * 2;
+
+  function repintarPronto() {
+    if (repintarPedido) return;
+    repintarPedido = true;
+    requestAnimationFrame(() => { repintarPedido = false; pintar(); });
+  }
+
+  function urlTesela(z, x, y) {
+    const plantilla = fondo.url[temaOscuro() && fondo.url.oscuro ? 'oscuro' : 'claro'];
+    const sub = fondo.subs ? fondo.subs[(x + y) % fondo.subs.length] : '';
+    return plantilla
+      .replace('{s}', sub)
+      .replace('{z}', z)
+      .replace('{x}', x)
+      .replace('{y}', y)
+      .replace('{r}', fondo.retina && dpr > 1.4 ? '@2x' : '');
+  }
+
+  function tesela(z, x, y) {
+    const clave = `${fondo.id}/${temaOscuro() ? 'd' : 'l'}/${z}/${x}/${y}`;
+    let t = teselas.get(clave);
+    if (t) return t;
+    const img = new Image();
+    t = { img, estado: 'cargando' };
+    teselas.set(clave, t);
+    img.onload = () => { t.estado = 'ok'; aciertos++; repintarPronto(); };
+    img.onerror = () => { t.estado = 'error'; fallos++; repintarPronto(); };
+    img.src = urlTesela(z, x, y);
+    return t;
+  }
+
+  function pintarFondo(t) {
+    if (!fondo.url) return false;
+    const z = Math.max(0, Math.min(fondo.maxZ, Math.round(Math.log2((TAU * escala) / 256))));
+    const n = Math.pow(2, z);
+    const lado = (TAU * escala) / n;               // tamaño en pantalla de cada tesela
+
+    /* rango visible en coordenadas normalizadas del esquema de teselas */
+    const xNorm = (xpx) => 0.5 + (cx + (xpx - W / 2) / escala) / TAU;
+    const yNorm = (ypx) => 0.5 - (cy - (ypx - H / 2) / escala) / TAU;
+    const x0 = Math.floor(xNorm(0) * n), x1 = Math.ceil(xNorm(W) * n);
+    const y0 = Math.floor(yNorm(0) * n), y1 = Math.ceil(yNorm(H) * n);
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return false;
+
+    usadas = new Set();
+    let dibujadas = 0;
+    ctx.imageSmoothingEnabled = true;
+    for (let ty = Math.max(0, y0); ty <= Math.min(n - 1, y1); ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const envuelto = ((tx % n) + n) % n;        // permite cruzar el antimeridiano
+        const t2 = tesela(z, envuelto, ty);
+        usadas.add(`${fondo.id}/${temaOscuro() ? 'd' : 'l'}/${z}/${envuelto}/${ty}`);
+        if (t2.estado !== 'ok') continue;
+        /* esquina superior izquierda de la tesela, en las mismas coordenadas
+           Mercator que usan px()/py() */
+        const lonRad = (tx / n - 0.5) * TAU;
+        const mercTop = (0.5 - ty / n) * TAU;
+        const sx = W / 2 + (lonRad - cx) * escala;
+        const sy = H / 2 - (mercTop - cy) * escala;
+        /* +1 px cubre las costuras del redondeo entre teselas contiguas */
+        ctx.drawImage(t2.img, Math.round(sx), Math.round(sy),
+                      Math.ceil(lado) + 1, Math.ceil(lado) + 1);
+        dibujadas++;
+      }
+    }
+
+    /* la caché no puede crecer sin límite en sesiones largas de navegación */
+    if (teselas.size > 700) {
+      for (const k of teselas.keys()) if (!usadas.has(k)) teselas.delete(k);
+    }
+
+    if (dibujadas && fondo.velo > 0) {
+      ctx.globalAlpha = fondo.velo;
+      ctx.fillStyle = t.fondo;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+    return dibujadas > 0;
+  }
+
+  function limpiarTeselas() {
+    teselas.clear();
+    fallos = 0;
+    aciertos = 0;
+  }
 
   function medir() {
     const r = cv.getBoundingClientRect();
@@ -1711,12 +1872,12 @@ const Mapa = (function () {
     cy = (yNorte + ySur) / 2;
     /* Un grupo de nodos muy juntos daría un encuadre de cientos de metros, sin
        contexto alrededor: se limita el acercamiento a un ancho mínimo útil. */
-    const MIN_KM = 6;
+    const MIN_KM = 2.5;
     const minRad = rad(MIN_KM / (111.32 * Math.max(0.25, Math.cos(cy ? rad(mercLat(cy)) : 0))));
     escala = Math.min(escala, W / minRad);
   }
 
-  function grilla(t) {
+  function grilla(t, conFondo) {
     /* de menor a mayor: el primer paso cuya separación supera los 58 px es el
        más fino que aún se lee (al revés siempre ganaría el paso de 10°) */
     const paso = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
@@ -1727,34 +1888,72 @@ const Mapa = (function () {
     ctx.fillStyle = t.ink3;
     ctx.lineWidth = 1;
     ctx.font = '9.5px ui-monospace, monospace';
+    const alfaLinea = conFondo ? 0.13 : 0.22;      // sobre cartografía, sólo insinuada
     const la0 = latDe(H), la1 = latDe(0);
     for (let la = Math.ceil(la0 / paso) * paso; la <= la1; la += paso) {
       const y = Math.round(py(la)) + 0.5;
-      ctx.globalAlpha = 0.22; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      ctx.globalAlpha = alfaLinea; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
       ctx.globalAlpha = 1;
-      if (y < H - 92) ctx.fillText(`${la.toFixed(paso < 1 ? 2 : 0)}°`, 4, y - 3);  // la leyenda ocupa la esquina
+      if (y < H - 92) etiqueta(`${la.toFixed(paso < 1 ? 2 : 0)}°`, 4, y - 3, t, conFondo);
     }
     const lo0 = lonDe(0), lo1 = lonDe(W);
     for (let lo = Math.ceil(lo0 / paso) * paso; lo <= lo1; lo += paso) {
       const x = Math.round(px(lo)) + 0.5;
-      ctx.globalAlpha = 0.22; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      ctx.globalAlpha = 1; ctx.fillText(`${lo.toFixed(paso < 1 ? 2 : 0)}°`, x + 3, H - 5);
+      ctx.globalAlpha = alfaLinea; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      ctx.globalAlpha = 1;
+      etiqueta(`${lo.toFixed(paso < 1 ? 2 : 0)}°`, x + 3, H - 26, t, conFondo);
     }
   }
 
-  function escalaGrafica(t) {
+  /** Texto con contorno del color de fondo, legible también sobre imágenes. */
+  function etiqueta(txt, x, y, t, conFondo) {
+    if (conFondo) {
+      ctx.strokeStyle = t.fondo;
+      ctx.lineWidth = 2.5;
+      ctx.strokeText(txt, x, y);
+    }
+    ctx.fillStyle = t.ink3;
+    ctx.fillText(txt, x, y);
+  }
+
+  /** Crédito de la fuente cartográfica: obligatorio por licencia. */
+  function avisarCredito(conFondo) {
+    const el = document.getElementById('map-credito');
+    if (!el) return;
+    if (conFondo) {
+      el.textContent = fondo.credito;
+    } else if (fondo.url && fallos > 0 && aciertos === 0) {
+      el.textContent = 'Sin fondo cartográfico: no hay acceso a las teselas';
+    } else {
+      el.textContent = '';
+    }
+    el.style.visibility = el.textContent ? 'visible' : 'hidden';
+  }
+
+  function escalaGrafica(t, conFondo) {
     const kmPorPx = (haversine(latDe(H / 2), lonDe(0), latDe(H / 2), lonDe(100))) / 100;
-    const objetivo = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    const objetivo = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
       .find((k) => k / kmPorPx > 60) || 1000;
     const largo = objetivo / kmPorPx;
-    const x = W - largo - 16, y = H - 22;
-    ctx.strokeStyle = t.ink; ctx.fillStyle = t.ink; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(x, y - 4); ctx.lineTo(x, y); ctx.lineTo(x + largo, y); ctx.lineTo(x + largo, y - 4);
-    ctx.stroke();
+    const x = W - largo - 16, y = H - 30;       // el crédito ocupa el borde inferior
+    ctx.lineWidth = conFondo ? 3.5 : 1.5;
+    ctx.strokeStyle = conFondo ? t.fondo : t.ink;
+    const trazo = () => {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4); ctx.lineTo(x, y); ctx.lineTo(x + largo, y); ctx.lineTo(x + largo, y - 4);
+      ctx.stroke();
+    };
+    if (conFondo) { trazo(); ctx.strokeStyle = t.ink; ctx.lineWidth = 1.5; }
+    trazo();
     ctx.font = '10px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`${objetivo} km`, x + largo / 2, y - 6);
+    const rotulo = objetivo < 1 ? `${objetivo * 1000} m` : `${objetivo} km`;
+    if (conFondo) {
+      ctx.strokeStyle = t.fondo; ctx.lineWidth = 3;
+      ctx.strokeText(rotulo, x + largo / 2, y - 6);
+    }
+    ctx.fillStyle = t.ink;
+    ctx.fillText(rotulo, x + largo / 2, y - 6);
     ctx.textAlign = 'left';
   }
 
@@ -1763,17 +1962,20 @@ const Mapa = (function () {
     const t = tema();
     ctx.fillStyle = t.fondo;
     ctx.fillRect(0, 0, W, H);
-    grilla(t);
+    const conFondo = pintarFondo(t);
+    grilla(t, conFondo);
+    avisarCredito(conFondo);
 
     /* sitios de red: intensidad por tecnología más alta presente */
     const r = escala > 900000 ? 2.6 : escala > 250000 ? 1.9 : 1.35;
     for (const s of RED) {
       const x = px(s.lon), y = py(s.lat);
       if (x < -20 || x > W + 20 || y < -20 || y > H + 20) continue;
-      ctx.globalAlpha = s.techMask & 8 ? 0.95 : s.techMask & 4 ? 0.6 : 0.34;
+      /* sobre cartografía los puntos necesitan más cuerpo para no perderse */
+      ctx.globalAlpha = s.techMask & 8 ? 0.95 : s.techMask & 4 ? (conFondo ? 0.8 : 0.6) : (conFondo ? 0.55 : 0.34);
       ctx.fillStyle = s.techMask & 8 ? t.mw : t.ink3;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, 6.2832);
+      ctx.arc(x, y, conFondo ? r + 0.5 : r, 0, 6.2832);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -1818,7 +2020,7 @@ const Mapa = (function () {
       }
     });
 
-    escalaGrafica(t);
+    escalaGrafica(t, conFondo);
 
     if (hover) {
       const x = px(hover.lon), y = py(hover.lat);
@@ -1897,7 +2099,7 @@ const Mapa = (function () {
       const mx = e.clientX - r.left, my = e.clientY - r.top;
       const laA = latDe(my), loA = lonDe(mx);
       const k = Math.exp(-e.deltaY * 0.0016);
-      escala = Math.max(2000, Math.min(9e6, escala * k));
+      escala = Math.max(2000, Math.min(4e7, escala * k));
       cx += rad(loA) - (cx + (mx - W / 2) / escala);
       cy += mercY(laA) - (cy - (my - H / 2) / escala);
       pintar();
@@ -1905,14 +2107,25 @@ const Mapa = (function () {
 
     new ResizeObserver(() => { medir(); pintar(); }).observe(cv);
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    mq.addEventListener && mq.addEventListener('change', pintar);
-    new MutationObserver(pintar).observe(document.documentElement,
+    const alCambiarTema = () => {
+      if (fondo.url && fondo.url.oscuro) limpiarTeselas();
+      pintar();
+    };
+    mq.addEventListener && mq.addEventListener('change', alCambiarTema);
+    new MutationObserver(alCambiarTema).observe(document.documentElement,
       { attributes: true, attributeFilter: ['data-theme'] });
   }
 
   return {
     init,
     pintar,
+    fijarFondo(id) {
+      const nuevo = fondoPorId(id);
+      if (nuevo === fondo) return;
+      fondo = nuevo;
+      limpiarTeselas();
+      pintar();
+    },
     fijar(nuevas) { capas = Object.assign({ candidatos: [], enlaces: [], nodos: [] }, nuevas); pintar(); },
     encuadrarEn(puntos, margen) { if (listo) { encuadrar(puntos, margen); pintar(); } },
     verTodo() { if (listo) { encuadrar(RED); pintar(); } },
@@ -1965,6 +2178,7 @@ const PARAMS_DEFECTO = {
   foVerdeKm: 3,
   foAmbarKm: 8,
   bandas: BANDAS.map((b) => b.id),
+  fondo: 'carto',
 };
 
 const ESTADO = {
@@ -2991,6 +3205,14 @@ function arrancar() {
     Object.entries(META.por_region).map(([k, n]) =>
       `<option value="${k}">${k} · ${(REGIONES[k] ? REGIONES[k].nombre : k)} (${n})</option>`).join('');
 
+  $('#fondo').innerHTML = FONDOS.map((f) =>
+    `<option value="${f.id}" ${f.id === ESTADO.params.fondo ? 'selected' : ''}>${f.nombre}</option>`).join('');
+  $('#fondo').addEventListener('change', (e) => {
+    ESTADO.params.fondo = e.target.value;
+    guardar();
+    Mapa.fijarFondo(e.target.value);
+  });
+
   Mapa.init($('#map'), (sitio, lat, lon) => {
     if (sitio) { usarComoPunto(sitio); return; }
     if (ESTADO.modo === 'enlace') {
@@ -3006,6 +3228,7 @@ function arrancar() {
     }
   });
 
+  Mapa.fijarFondo(ESTADO.params.fondo || 'carto');
   setModo('sitio');
   irA('analizar');
   render();

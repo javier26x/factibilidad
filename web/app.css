@@ -652,11 +652,21 @@ td.strong { font-weight: 600; }
   pointer-events: none;
   white-space: pre;
 }
-.map-tools {
+/* crédito de la fuente cartográfica: exigido por las licencias de OSM,
+   CARTO, OpenTopoMap y Esri */
+.map-credito {
   position: absolute;
-  right: 12px; bottom: 12px;
-  display: flex;
-  gap: 6px;
+  right: 0; bottom: 0;
+  visibility: hidden;
+  max-width: 70%;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-top-left-radius: 3px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  pointer-events: none;
+  text-align: right;
 }
 
 /* ============================ perfil geométrico ============================ */
