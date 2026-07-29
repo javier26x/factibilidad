@@ -1,0 +1,254 @@
+<title>Factibilidad FO / MMOO</title>
+
+<div class="shell">
+  <header class="topbar">
+    <div class="wordmark">
+      <span class="fo-tick">━━</span><span>FACTIBILIDAD</span><span class="sep">/</span><span class="mw-tick">╱╲</span>
+    </div>
+    <span class="subtitle">Fibra óptica y microondas contra la red existente</span>
+    <div class="netstat" id="chips"></div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-view="analizar" aria-selected="true">Analizar</button>
+    <button class="tab" role="tab" data-view="red" aria-selected="false">Base de red</button>
+    <button class="tab" role="tab" data-view="parametros" aria-selected="false">Parámetros</button>
+    <button class="tab" role="tab" data-view="metodologia" aria-selected="false">Metodología</button>
+  </nav>
+
+  <!-- ============================ ANALIZAR ============================ -->
+  <section class="view active" id="view-analizar">
+    <div class="workspace">
+
+      <aside class="console">
+        <div class="field-group">
+          <div class="group-label">Qué evaluar</div>
+          <div class="seg" id="modo">
+            <button type="button" data-modo="sitio" aria-pressed="true">Sitio</button>
+            <button type="button" data-modo="enlace" aria-pressed="false">Enlace A–B</button>
+            <button type="button" data-modo="lote" aria-pressed="false">Lote</button>
+          </div>
+          <p class="hint" id="modo-hint">Un punto nuevo: busca en la red el mejor nodo de
+            agregación por fibra y por radio.</p>
+        </div>
+
+        <!-- modo sitio -->
+        <div class="field-group" data-panel-modo="sitio">
+          <div class="group-label">Punto candidato</div>
+          <label class="field"><span>Nombre</span>
+            <input type="text" id="nombre" placeholder="Cliente Chicureo"></label>
+          <div class="row2">
+            <label class="field"><span>Latitud</span>
+              <input type="text" id="lat" placeholder="-33.29850"></label>
+            <label class="field"><span>Longitud</span>
+              <input type="text" id="lon" placeholder="-70.66800"></label>
+          </div>
+          <label class="field"><span>Altura de torre prevista (m)</span>
+            <input type="number" id="alturaCand" value="30" min="3" max="150"></label>
+          <div class="lookup">
+            <label class="field"><span>…o partir de un sitio de la red</span>
+              <input type="text" id="lookup" placeholder="código, nombre o comuna" autocomplete="off"></label>
+            <div class="lookup-list" id="lookup-list"></div>
+          </div>
+        </div>
+
+        <!-- modo enlace -->
+        <div class="field-group" data-panel-modo="enlace" style="display:none">
+          <div class="group-label">Extremo A</div>
+          <label class="field"><span>Nombre</span>
+            <input type="text" id="nombreA" placeholder="Extremo A"></label>
+          <div class="row3">
+            <label class="field"><span>Latitud</span><input type="text" id="latA"></label>
+            <label class="field"><span>Longitud</span><input type="text" id="lonA"></label>
+            <label class="field"><span>Torre m</span><input type="number" id="alturaA" value="30"></label>
+          </div>
+          <div class="group-label">Extremo B</div>
+          <label class="field"><span>Nombre</span>
+            <input type="text" id="nombreB" placeholder="Extremo B"></label>
+          <div class="row3">
+            <label class="field"><span>Latitud</span><input type="text" id="latB"></label>
+            <label class="field"><span>Longitud</span><input type="text" id="lonB"></label>
+            <label class="field"><span>Torre m</span><input type="number" id="alturaB" value="30"></label>
+          </div>
+          <div class="lookup">
+            <label class="field"><span>Buscar extremo B en la red</span>
+              <input type="text" id="lookupB" placeholder="código, nombre o comuna" autocomplete="off"></label>
+            <div class="lookup-list" id="lookupB-list"></div>
+          </div>
+        </div>
+
+        <!-- modo lote -->
+        <div class="field-group" data-panel-modo="lote" style="display:none">
+          <div class="group-label">Pegar desde planilla</div>
+          <textarea id="lote" rows="9" placeholder="Nombre; latitud; longitud; altura
+Bodega Lampa; -33.28617; -70.87233; 24
+Nodo Los Andes; -32.83370; -70.59810
+Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
+01_404"></textarea>
+          <p class="hint">Una fila por sitio. Cuatro coordenadas en la misma fila se leen como
+            un enlace A–B. Una sola columna se interpreta como código de un sitio de la red.
+            Acepta grados decimales o <code>18°28'23.3"S</code>.</p>
+          <div id="lote-errores" style="display:none"></div>
+        </div>
+
+        <!-- cotas: sólo tiene sentido sobre un vano concreto -->
+        <div class="field-group" id="cotas-panel" data-panel-modo="enlace" style="display:none">
+          <div class="group-label">Cotas de terreno (opcional)</div>
+          <p class="hint">Con estas tres cotas el despeje se resuelve de verdad; sin ellas el
+            veredicto de radio queda pendiente de perfil topográfico.</p>
+          <div class="row2">
+            <label class="field"><span>Cota en A (msnm)</span><input type="number" id="cotaA"></label>
+            <label class="field"><span>Cota en B (msnm)</span><input type="number" id="cotaB"></label>
+          </div>
+          <div class="row2">
+            <label class="field"><span>Cota del obstáculo</span><input type="number" id="cotaObs"></label>
+            <label class="field"><span>Distancia desde A (km)</span><input type="number" id="dObs" step="0.1"></label>
+          </div>
+        </div>
+
+        <div class="btnrow">
+          <button class="primary" id="analizar" style="flex:1">Analizar</button>
+          <button class="ghost" id="limpiar">Limpiar</button>
+        </div>
+        <div class="btnrow">
+          <button class="ghost" id="ejemplo">Cargar ejemplo</button>
+          <button class="ghost" id="ver-todo">Ver toda la red</button>
+        </div>
+        <p class="hint">Base: <span id="fuente"></span></p>
+      </aside>
+
+      <div class="results">
+        <div class="verdicts" id="veredictos"></div>
+        <div id="resumen-lote" style="display:none"></div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Mapa</h3>
+            <div class="spacer"></div>
+            <span class="hint">clic en un sitio para cargarlo · clic en vacío para fijar el candidato ·
+              rueda para acercar</span>
+          </div>
+          <div class="mapwrap">
+            <canvas id="map"></canvas>
+            <div class="map-readout" id="map-readout"></div>
+            <div class="map-legend">
+              <span><span class="dot" style="background:var(--mw)"></span>sitio con 5G</span>
+              <span><span class="dot" style="background:var(--ink-3)"></span>sitio 2G/3G/LTE</span>
+              <span><span style="display:inline-block;width:14px;border-top:2px dashed var(--fo)"></span>ruta de fibra</span>
+              <span><span style="display:inline-block;width:14px;border-top:2px solid var(--mw)"></span>vano de radio</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="detalle"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ BASE DE RED ============================ -->
+  <section class="view" id="view-red">
+    <div style="padding:16px 20px 40px;display:flex;flex-direction:column;gap:12px">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Sitios en la red</h3>
+          <div class="spacer"></div>
+          <span class="hint" id="conteo-red"></span>
+        </div>
+        <div class="panel-body" style="display:grid;grid-template-columns:2fr 1.4fr 1fr;gap:10px">
+          <label class="field"><span>Buscar</span>
+            <input type="text" id="buscar-red" placeholder="código, nombre o comuna"></label>
+          <label class="field"><span>Región</span><select id="filtro-region"></select></label>
+          <label class="field"><span>Tecnología</span>
+            <select id="filtro-tec">
+              <option value="">Todas</option>
+              <option value="2G">2G</option><option value="3G">3G</option>
+              <option value="LTE">LTE</option><option value="5G">5G</option>
+            </select></label>
+        </div>
+        <div class="tablewrap" id="tabla-red"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ PARÁMETROS ============================ -->
+  <section class="view" id="view-parametros">
+    <div class="params" id="params"></div>
+  </section>
+
+  <!-- ============================ METODOLOGÍA ============================ -->
+  <section class="view" id="view-metodologia">
+    <div class="prose">
+      <h2>Qué hace esta herramienta y qué no</h2>
+      <p>Toma la red que ya existe —los sitios de los dumps CGI de 2G, 3G, LTE y 5G— y responde,
+        para un punto o un vano nuevo, si conviene resolverlo con fibra óptica o con un salto de
+        microondas. Es un tamiz de factibilidad para decidir dónde vale la pena gastar una visita
+        a terreno o un perfil topográfico, no un reemplazo de esos pasos.</p>
+
+      <div class="callout">
+        <p>La base CGI no contiene el medio de transmisión de cada sitio ni la altimetría del
+          terreno. Esas son las dos incógnitas que la herramienta no puede cerrar sola: la
+          primera se resuelve pegando el inventario real de nodos con fibra en Parámetros, la
+          segunda cargando las cotas del vano en el modo Enlace A–B.</p>
+      </div>
+
+      <h2>Fibra óptica</h2>
+      <p>La distancia en línea recta al nodo se multiplica por un factor de sinuosidad —el
+        recorrido real por calles y postación siempre es más largo que la recta— y sobre esa
+        longitud se aplica un costo por kilómetro distinto según si el nodo está en zona urbana
+        o rural. Los cuatro valores son parámetros editables; los que vienen por defecto son
+        órdenes de magnitud de planificación, no cotizaciones.</p>
+      <p>Como el dump no dice qué sitios tienen fibra, se estima con el perfil radio de cada uno:
+        un sitio con 5G necesita transporte de alta capacidad y casi con certeza ya tiene fibra;
+        muchas celdas LTE y emplazamiento urbano apuntan en la misma dirección; un sitio rural
+        con sólo 2G y 3G, en contra. Es una inferencia declarada como tal, y el inventario real
+        la reemplaza por completo cuando se carga.</p>
+
+      <h2>Microondas</h2>
+      <h3>Balance del vano</h3>
+      <p>Para cada banda de 7 a 38 GHz y para E-band se calcula la pérdida en espacio libre
+        (<code>92,45 + 20·log f + 20·log d</code>), la absorción atmosférica y las pérdidas de
+        ramificación, y se prueba el diámetro de antena más pequeño que cumple. La modulación es
+        la mínima que entrega la capacidad pedida en el ancho de canal de la banda, y su umbral de
+        recepción fija el margen de desvanecimiento disponible.</p>
+
+      <h3>Lluvia y disponibilidad</h3>
+      <p>La atenuación por lluvia sigue ITU-R P.530 con los coeficientes de P.838-3: se obtiene la
+        atenuación específica <code>γ = k·R^α</code>, se corrige la longitud del vano por el
+        factor de trayecto efectivo y se escala el resultado al porcentaje de tiempo buscado. La
+        tasa de lluvia <code>R₀,₀₁</code> se toma de la región del nodo más cercano —de 8 mm/h en
+        el norte a 35 mm/h en Los Lagos— y es editable región por región. Al total se suma el
+        desvanecimiento multitrayecto de P.530 en su forma simplificada.</p>
+      <p>De ahí sale la banda recomendada: la más alta que cierra el vano con la disponibilidad
+        objetivo. Se prefiere la más alta a propósito, para no consumir las bandas bajas —escasas
+        y con licencia más disputada— en saltos que se resuelven arriba.</p>
+
+      <h3>Despeje</h3>
+      <p>El despeje exigido en el punto crítico es la suma del abultamiento terrestre con factor
+        <code>k = 4/3</code>, una fracción de la primera zona de Fresnel y un margen por
+        vegetación y clutter. Sin cotas de terreno la herramienta sólo comprueba si las alturas
+        declaradas alcanzarían en terreno plano, y lo dice: el veredicto queda condicionado a
+        perfil. Con las tres cotas cargadas —extremo A, extremo B y obstáculo— el despeje se
+        resuelve con holgura numérica y el veredicto pasa a ser una conclusión.</p>
+
+      <h2>Semáforo</h2>
+      <ul>
+        <li><b>Factible</b>: cierra con los parámetros vigentes y sin condiciones pendientes que
+          cambien la conclusión.</li>
+        <li><b>Condicionada</b>: cierra, pero depende de algo por confirmar —perfil topográfico,
+          antena grande que exige revisar carga de torre, presencia real de fibra en el nodo,
+          o permisos de obra civil.</li>
+        <li><b>No factible</b>: ninguna banda alcanza la disponibilidad objetivo a esa distancia,
+          el despeje declarado no da, o el tendido supera el umbral de kilómetros admitido.</li>
+      </ul>
+
+      <h2>Precisión de la base</h2>
+      <p>Los <span id="meta-sitios"></span> sitios salen de consolidar por código de sitio todas
+        las celdas de las ocho hojas de los dos workbooks; las coordenadas son la mediana de las
+        que aparecen en cada hoja y la altura de antena, la mediana de las alturas declaradas por
+        celda. Las distancias son ortodrómicas sobre esfera de radio 6.371 km, con error por
+        debajo del metro en los rangos de interés.</p>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
