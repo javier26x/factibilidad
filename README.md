@@ -11,9 +11,27 @@ Magallanes.
 Todo corre en el navegador, sin servidor ni dependencias externas: `dist/index.html` es un
 único archivo autocontenido con los datos incrustados.
 
+## Dónde está publicado
+
+**https://javier26x.github.io/factibilidad/**
+
+El workflow `.github/workflows/pages.yml` reconstruye `dist/` desde las fuentes y lo publica
+en GitHub Pages en cada push a la rama por defecto. No hay build step que instalar: sólo
+Python de la biblioteca estándar.
+
+Para servirlo en Firebase Hosting en su lugar, el repo ya trae `firebase.json` apuntando a
+`dist/`:
+
+```sh
+firebase login
+firebase use --add                    # elegir el proyecto una vez
+python3 tools/build_web.py && firebase deploy --only hosting
+```
+
 ## Uso
 
-Abrir `dist/index.html` en el navegador. Tres modos de trabajo:
+También sirve abrir `dist/index.html` directo en el navegador, sin servidor. Tres modos de
+trabajo:
 
 | Modo | Entrada | Qué responde |
 | --- | --- | --- |

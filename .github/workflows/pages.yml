@@ -1,0 +1,49 @@
+name: Publicar en GitHub Pages
+
+# Reconstruye dist/ desde las fuentes y lo publica. Sólo corre en la rama por
+# defecto del repositorio, de modo que sigue funcionando si más adelante pasa
+# a llamarse main.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  desplegar:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # se reconstruye en CI para que el sitio siempre refleje web/ y data/
+      - name: Construir dist/
+        run: python3 tools/build_web.py
+
+      - name: Habilitar Pages si aún no lo está
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Subir el sitio
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Desplegar
+        id: despliegue
+        uses: actions/deploy-pages@v4
