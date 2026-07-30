@@ -117,14 +117,14 @@
 
   function guardar() {
     try {
-      localStorage.setItem(CLAVE_LS, JSON.stringify({ params: cfg(), entrada: $('#entrada').value, tema: document.documentElement.getAttribute('data-tema') }));
+      localStorage.setItem(CLAVE_LS, JSON.stringify({ params: cfg(), entrada: $('#entrada').value, tema: document.documentElement.getAttribute('data-theme') }));
     } catch (e) { /* modo privado: seguir sin persistencia */ }
   }
   function restaurar() {
     var d;
     try { d = JSON.parse(localStorage.getItem(CLAVE_LS) || 'null'); } catch (e) { d = null; }
     if (!d) return;
-    if (d.tema) document.documentElement.setAttribute('data-tema', d.tema);
+    if (d.tema) document.documentElement.setAttribute('data-theme', d.tema);
     if (d.entrada) $('#entrada').value = d.entrada;
     if (d.params) Object.keys(d.params).forEach(function (k) {
       var n = document.getElementById('p_' + k);
@@ -793,6 +793,13 @@
     'Cliente Quilicura -33.3560,-70.7290 -> 13_184'
   ].join('\n');
 
+  /* Repinta lo que depende de los colores del tema. */
+  function redibujar() {
+    if (!resultados.length) return;
+    mapa.dibujar();
+    if (seleccion) mostrarDetalle(seleccion);
+  }
+
   /* ---------------- arranque ---------------- */
   function iniciar() {
     if (!global_ok()) return;
@@ -821,11 +828,23 @@
     $('#btnCsv').addEventListener('click', csv);
     $('#btnMapaFit').addEventListener('click', function () { mapa.encuadrar(); });
     $('#btnTema').addEventListener('click', function () {
-      var actual = document.documentElement.getAttribute('data-tema');
-      document.documentElement.setAttribute('data-tema', actual === 'claro' ? 'oscuro' : 'claro');
+      // si nadie fijó el tema, se parte del que muestra el sistema
+      var actual = document.documentElement.getAttribute('data-theme') ||
+        (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', actual === 'light' ? 'dark' : 'light');
       guardar();
-      if (resultados.length) { mapa.dibujar(); if (seleccion) mostrarDetalle(seleccion); }
+      redibujar();
     });
+
+    // el visor puede cambiar el tema por su cuenta: los canvas leen los colores
+    // del CSS al dibujar, así que hay que repintarlos
+    new MutationObserver(redibujar).observe(document.documentElement, {
+      attributes: true, attributeFilter: ['data-theme']
+    });
+    if (window.matchMedia) {
+      var mq = window.matchMedia('(prefers-color-scheme: light)');
+      if (mq.addEventListener) mq.addEventListener('change', redibujar);
+    }
     $('#entrada').addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); evaluar(); }
     });
@@ -852,9 +871,7 @@
     var t;
     window.addEventListener('resize', function () {
       clearTimeout(t);
-      t = setTimeout(function () {
-        if (resultados.length) { mapa.dibujar(); if (seleccion) mostrarDetalle(seleccion); }
-      }, 160);
+      t = setTimeout(redibujar, 160);
     });
     buscador();
   }

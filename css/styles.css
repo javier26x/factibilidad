@@ -1,5 +1,13 @@
 /* styles.css - factibilidad de enlaces FO / MMOO */
 
+/* Tema: los neutros llevan un sesgo azul hacia el acento cian, para que la
+   interfaz densa de datos no se lea como gris de plantilla.
+
+   Precedencia (de menor a mayor): base oscuro -> preferencia del sistema ->
+   data-theme del visor. Los selectores con atributo tienen mas especificidad
+   que :root, asi que ganan sobre la media query en ambos sentidos. El boton de
+   la pagina escribe el mismo data-theme, por lo que no hay dos mecanismos en
+   conflicto. */
 :root {
   --bg:        #0e1117;
   --bg-2:      #151a23;
@@ -22,24 +30,66 @@
   color-scheme: dark;
 }
 
-:root[data-tema="claro"] {
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:        #f6f8fa;
+    --bg-2:      #ffffff;
+    --bg-3:      #eef2f6;
+    --linea:     #d8e0e8;
+    --linea-2:   #bcc8d4;
+    --txt:       #17202a;
+    --txt-2:     #55616e;
+    --txt-3:     #7d8b99;
+    --fo:        #0b6f92;
+    --mw:        #6440c8;
+    --alta:      #12855a;
+    --media:     #9a6f08;
+    --baja:      #b8571a;
+    --noviable:  #c22f2f;
+    --acento:    #0b6f92;
+    --sombra:    0 1px 2px rgba(16,24,40,.06), 0 8px 20px -14px rgba(16,24,40,.2);
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
   --bg:        #f6f8fa;
   --bg-2:      #ffffff;
   --bg-3:      #eef2f6;
   --linea:     #d8e0e8;
   --linea-2:   #bcc8d4;
   --txt:       #17202a;
-  --txt-2:     #5a6673;
-  --txt-3:     #8593a1;
-  --fo:        #0d7fa5;
-  --mw:        #7048d8;
-  --alta:      #169c68;
-  --media:     #b8860b;
-  --baja:      #d2691e;
-  --noviable:  #d13b3b;
-  --acento:    #0d7fa5;
+  --txt-2:     #55616e;
+  --txt-3:     #7d8b99;
+  --fo:        #0b6f92;
+  --mw:        #6440c8;
+  --alta:      #12855a;
+  --media:     #9a6f08;
+  --baja:      #b8571a;
+  --noviable:  #c22f2f;
+  --acento:    #0b6f92;
   --sombra:    0 1px 2px rgba(16,24,40,.06), 0 8px 20px -14px rgba(16,24,40,.2);
   color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg:        #0e1117;
+  --bg-2:      #151a23;
+  --bg-3:      #1c232e;
+  --linea:     #2a3340;
+  --linea-2:   #3a4655;
+  --txt:       #e6edf3;
+  --txt-2:     #9aa7b6;
+  --txt-3:     #6b7887;
+  --fo:        #35b8e0;
+  --mw:        #a78bfa;
+  --alta:      #3ecf8e;
+  --media:     #f5c04a;
+  --baja:      #f2913d;
+  --noviable:  #ef5f5f;
+  --acento:    #35b8e0;
+  --sombra:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -184,7 +234,8 @@ details.grupo { border-top: 1px solid var(--linea); }
 details.grupo summary { font-weight: 500; color: var(--txt); }
 
 /* ---------- parámetros ---------- */
-.params { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; padding: 6px 0 10px; }
+/* align-items:end alinea los campos aunque una etiqueta ocupe dos líneas */
+.params { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; padding: 6px 0 10px; align-items: end; }
 .p { display: grid; gap: 3px; min-width: 0; }
 .p.ancho { grid-column: 1 / -1; }
 .p label { font-size: 11px; color: var(--txt-2); display: flex; align-items: baseline; gap: 4px; }
@@ -206,7 +257,7 @@ details.grupo summary { font-weight: 500; color: var(--txt); }
   background: var(--bg-2); border: 1px solid var(--linea); border-radius: var(--r);
   padding: 11px 13px; box-shadow: var(--sombra);
 }
-.kpi .v { font-size: 22px; font-weight: 650; font-family: var(--mono); letter-spacing: -.02em; }
+.kpi .v { font-size: 22px; font-weight: 650; font-family: var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .kpi .l { font-size: 10.5px; color: var(--txt-2); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
 .kpi.a .v { color: var(--alta); } .kpi.m .v { color: var(--media); }
 .kpi.b .v { color: var(--baja); } .kpi.x .v { color: var(--noviable); }
@@ -226,7 +277,7 @@ tbody td { padding: 7px 9px; border-bottom: 1px solid var(--linea); vertical-ali
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--bg-3); }
 tbody tr.sel { background: color-mix(in srgb, var(--acento) 12%, transparent); }
-th.n, td.n { text-align: right; font-family: var(--mono); white-space: nowrap; }
+th.n, td.n { text-align: right; font-family: var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
 th.c, td.c { text-align: center; }
 td.cod { font-family: var(--mono); font-size: 11.5px; }
 td .sub2 { display: block; color: var(--txt-3); font-size: 11px; }
@@ -282,7 +333,7 @@ canvas { width: 100%; display: block; border-radius: 8px; background: var(--bg);
 .bloque h3 .der { margin-left: auto; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; }
 .kv dt { color: var(--txt-2); }
-.kv dd { margin: 0; font-family: var(--mono); font-size: 12px; text-align: right; }
+.kv dd { margin: 0; font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
 .kv dd.mal { color: var(--noviable); }
 .kv dd.bien { color: var(--alta); }
 .kv dd.ojo { color: var(--media); }
@@ -290,7 +341,7 @@ canvas { width: 100%; display: block; border-radius: 8px; background: var(--bg);
 .mini th { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--txt-3); text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--linea); font-weight: 500; }
 .mini td { padding: 4px 6px; border-bottom: 1px solid var(--linea); }
 .mini tr:last-child td { border-bottom: 0; }
-.mini td.n, .mini th.n { text-align: right; font-family: var(--mono); }
+.mini td.n, .mini th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .mini tr.elegida { background: color-mix(in srgb, var(--alta) 12%, transparent); }
 .mini tr.elegida td:first-child::before { content: "✓ "; color: var(--alta); }
 .mini tr.fuera td { color: var(--txt-3); }
