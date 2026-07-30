@@ -6,4 +6,5 @@ __pycache__/
 # volcados de origen: pesados y reemplazables, sólo se versiona lo derivado
 # (data/sites.json, data/capa_*.json), igual que con los workbooks CGI
 *.kmz
+*.kml
 *.xlsx

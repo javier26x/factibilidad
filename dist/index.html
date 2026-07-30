@@ -886,6 +886,12 @@ Bodega Lampa; -33.28617; -70.87233
             <label data-fuente="autorizadas" data-activa="1">
               <input type="checkbox" checked><span class="glifo">▽</span>SUBTEL autorizadas (16.901)
             </label>
+            <label data-fuente="ooii" data-activa="1">
+              <input type="checkbox" checked><span class="glifo">■</span>Infraestructura OOII (16.846)
+            </label>
+            <label data-fuente="torrecom" data-activa="1">
+              <input type="checkbox" checked><span class="glifo">◆</span>Torrecom (179)
+            </label>
           </div>
           <p class="hint" id="cerca-estado"></p>
         </div>
@@ -1198,13 +1204,21 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         satelital son más extensos. Para uso comercial hay que revisarlos. Sin facturación, el
         fondo Satélite de Esri ya cubre Chile completo sin clave.</p>
 
-      <h2>Capas SUBTEL</h2>
-      <p>Los registros de antenas de SUBTEL —autorizadas y en servicio— se pueden encender y
-        apagar sobre el mapa, con filtro por marca. Son 16.901 y 12.568 emplazamientos, cada uno
-        con su soporte, altura, tecnologías, bandas y comuna, consolidados desde los KMZ
-        oficiales: cada antena aparece ahí repetida una vez por tecnología y banda, y se agrupan
-        por coordenada. Sirven para ver de quién es la infraestructura del entorno y qué
-        estructura hay disponible para colocarse.</p>
+      <h2>Capas externas</h2>
+      <p>Cuatro capas se pueden encender y apagar sobre el mapa, con filtro por marca, y sirven
+        además como fuentes en la búsqueda de cercanos: los dos registros de antenas de SUBTEL
+        —en servicio y autorizadas, 12.568 y 16.901 emplazamientos—, el consolidado de
+        infraestructura OOII con 16.846 torres de ATC, PTI, SBA, QMC, ATP, Entel, WOM y
+        Torrecom, y el portafolio propio de Torrecom con 179 sitios.</p>
+      <p>El portafolio de Torrecom es el más rico: trae estado de obra —On air, Construido,
+        Landbanking, RFC, En proceso Permiso/Aviso DOM—, tipo de sitio, zonificación y altura
+        validada. Eso es lo que decide si una estructura sirve hoy para coubicarse o todavía no
+        existe.</p>
+      <p>Torrecom aparece en las dos capas de infraestructura y no se fusionan: son volcados de
+        distinta fecha y contrastarlos es parte de la utilidad. Sólo los dos registros de SUBTEL
+        se funden entre sí, porque describen la misma antena desde dos trámites; una capa de
+        infraestructura describe la estructura, no la antena, y coincidir en posición no prueba
+        que sea el mismo soporte.</p>
 
       <h2>Alternativas</h2>
       <p>Un vano no se evalúa solo. Para cada enlace A–B se calculan además los nodos de la red
@@ -2207,14 +2221,32 @@ const CAPAS = [
     forma: 'arriba', alfa: 0.9 },
   { id: 'autorizadas', archivo: 'capas/autorizadas.json', nombre: 'Antenas autorizadas',
     forma: 'abajo', alfa: 0.6 },
+  { id: 'ooii', archivo: 'capas/ooii.json', nombre: 'Infraestructura OOII',
+    forma: 'cuadro', alfa: 0.85 },
+  { id: 'torrecom', archivo: 'capas/torrecom.json', nombre: 'Portafolio Torrecom',
+    forma: 'rombo', alfa: 0.95 },
 ];
 
 /* Un color por marca, compartido por las dos capas: lo que se quiere leer de un
    vistazo es de quién es la antena, no en qué registro aparece. */
 const COLOR_MARCA = {
+  /* operadores móviles */
   CLARO: '#e4574f', ENTEL: '#3f8ae0', MOVISTAR: '#4fb3a6', WOM: '#c964c0',
-  WILL: '#d99a3c', VTR: '#6cae4a', BORDER: '#8a8fa8', OTROS: '#8a8fa8',
+  WILL: '#d99a3c', VTR: '#6cae4a', BORDER: '#8a8fa8',
+  /* empresas de infraestructura */
+  ATC: '#e08a3f', ATP: '#b0894f', PTI: '#7d6ce0', QMC: '#3fa0b8',
+  SBA: '#d05a86', TORRECOM: '#5fb36b',
+  OTROS: '#8a8fa8',
 };
+
+/* Una marca que no esté en la paleta igual recibe un color estable, derivado de
+   su nombre: así una fuente nueva no sale toda gris. */
+function colorMarca(m) {
+  if (COLOR_MARCA[m]) return COLOR_MARCA[m];
+  let h = 0;
+  for (let i = 0; i < m.length; i++) h = (h * 31 + m.charCodeAt(i)) % 360;
+  return `hsl(${h} 52% 58%)`;
+}
 
 const Capas = (function () {
   const estado = new Map();     // id -> {cargando, datos, error}
@@ -2227,9 +2259,10 @@ const Capas = (function () {
       acLat += j.lat[i]; acLon += j.lon[i];
       lat[i] = acLat / 1e5; lon[i] = acLon / 1e5;
     }
-    return { titulo: j.titulo, n, lat, lon, dic: j.dic,
-             marca: j.marca, tec: j.tec, sop: j.sop, alt: j.alt,
-             com: j.com, ban: j.ban, nom: j.nom, sid: j.sid, el: j.el };
+    /* se conserva todo lo que traiga el archivo y sólo se reemplazan las
+       coordenadas por las ya acumuladas: enumerar los campos uno por uno hacía
+       que cualquier campo nuevo se perdiera en silencio al decodificar */
+    return Object.assign({}, j, { n, lat, lon });
   }
 
   /** Índices dentro de una ventana. Los puntos vienen ordenados por latitud,
@@ -2271,25 +2304,28 @@ const Capas = (function () {
 
   /** Ficha legible de un emplazamiento, para el rótulo al pasar el cursor. */
   function ficha(d, i) {
-    const marcas = Object.keys(COLOR_MARCA)
-      .filter((_, k) => d.marca[i] & (1 << k)).slice(0, 4);
+    const marcas = (d.dic.marcas || []).filter((_, k) => d.marca[i] & (1 << k)).slice(0, 4);
     const tec = ['2G', '3G', '4G', '5G'].filter((_, k) => d.tec[i] & (1 << k));
+    const est = d.est && d.est[i] >= 0 ? (d.dic.estados || [])[d.est[i]] : '';
     return {
       nombre: d.nom[i] || d.sid[i] || '—',
       sid: d.sid[i],
       marcas: marcas.length ? marcas : ['OTROS'],
       tec,
-      soporte: d.sop[i] >= 0 ? d.dic.soportes[d.sop[i]] : '—',
+      soporte: d.sop[i] >= 0 ? d.dic.soportes[d.sop[i]] : '',
       altura: d.alt[i],
       comuna: d.com[i] >= 0 ? d.dic.comunas[d.com[i]] : '',
       bandas: (d.ban[i] || []).map((k) => d.dic.bandas[k]),
+      estado: est || '',
       elementos: d.el[i],
       lat: d.lat[i], lon: d.lon[i],
     };
   }
 
-  const marcaDe = (mask) => {
-    const claves = Object.keys(COLOR_MARCA);
+  /* la máscara indexa el diccionario de la capa, no una lista global: las capas
+     de infraestructura tienen su propio universo de empresas */
+  const marcaDe = (mask, d) => {
+    const claves = (d && d.dic && d.dic.marcas) || [];
     for (let k = 0; k < claves.length; k++) if (mask & (1 << k)) return claves[k];
     return 'OTROS';
   };
@@ -2601,7 +2637,14 @@ const Mapa = (function () {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  /* Se recuerda el último encuadre pedido: cuando se encuadra con la pestaña
+     todavía oculta el canvas mide 1×1, la escala sale de esas dimensiones y el
+     ResizeObserver posterior arregla el tamaño pero no la escala ya calculada.
+     Guardarlo permite rehacerlo en cuanto el canvas tiene medidas reales. */
+  let ultimoEncuadre = null;
+
   function encuadrar(puntos, margen) {
+    ultimoEncuadre = { puntos, margen };
     const pts = puntos && puntos.length ? puntos : RED;
     let laMin = 90, laMax = -90, loMin = 180, loMax = -180;
     pts.forEach((p) => {
@@ -2638,12 +2681,20 @@ const Mapa = (function () {
       const r = denso ? 1.1 : (escala > 400000 ? 4 : 3);
       ctx.globalAlpha = cfg.alfa;
       for (const i of idx) {
-        const marca = Capas.marcaDe(d.marca[i]);
+        const marca = Capas.marcaDe(d.marca[i], d);
         if (filtro && filtro.size && !filtro.has(marca)) continue;
         const x = px(d.lon[i]), y = py(d.lat[i]);
-        ctx.fillStyle = COLOR_MARCA[marca] || COLOR_MARCA.OTROS;
+        ctx.fillStyle = colorMarca(marca);
         if (denso) {
           ctx.fillRect(x - r, y - r, r * 2, r * 2);
+        } else if (cfg.forma === 'cuadro') {
+          ctx.fillRect(x - r * 0.8, y - r * 0.8, r * 1.6, r * 1.6);
+        } else if (cfg.forma === 'rombo') {
+          ctx.beginPath();
+          ctx.moveTo(x, y - r); ctx.lineTo(x + r, y);
+          ctx.lineTo(x, y + r); ctx.lineTo(x - r, y);
+          ctx.closePath();
+          ctx.fill();
         } else {
           const s = cfg.forma === 'abajo' ? -1 : 1;
           ctx.beginPath();
@@ -2882,9 +2933,11 @@ const Mapa = (function () {
           const a = antenaEn(mx, my);
           if (a) {
             const f = Capas.ficha(a.d, a.i);
+            const linea2 = [f.soporte, f.altura ? `${f.altura} m` : '', f.tec.join(' ')]
+              .filter(Boolean).join(' · ');
             extra = `\n${f.marcas.join('/')} · ${f.nombre}` +
-              `\n${f.soporte}${f.altura ? ` ${f.altura} m` : ''}` +
-              `${f.tec.length ? ` · ${f.tec.join(' ')}` : ''}` +
+              (linea2 ? `\n${linea2}` : '') +
+              `${f.estado ? `\n${f.estado}` : ''}` +
               `${f.comuna ? `\n${f.comuna}` : ''}` +
               `${f.bandas.length ? `\n${f.bandas.join('/')} MHz` : ''}` +
               `\n${a.capa.nombre}`;
@@ -2921,7 +2974,14 @@ const Mapa = (function () {
       pintar();
     }, { passive: false });
 
-    new ResizeObserver(() => { medir(); pintar(); }).observe(cv);
+    new ResizeObserver(() => {
+      const degenerado = W < 10 || H < 10;
+      medir();
+      if (degenerado && W >= 10 && H >= 10 && ultimoEncuadre) {
+        encuadrar(ultimoEncuadre.puntos, ultimoEncuadre.margen);
+      }
+      pintar();
+    }).observe(cv);
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const alCambiarTema = () => {
       if (fondo.url && fondo.url.oscuro) limpiarTeselas();
@@ -3157,7 +3217,16 @@ const FUENTES_CERCA = [
   { id: 'propia', etiqueta: 'Red propia', corto: 'propia' },
   { id: 'servicio', etiqueta: 'SUBTEL en servicio', corto: 'servicio' },
   { id: 'autorizadas', etiqueta: 'SUBTEL autorizadas', corto: 'autorizada' },
+  { id: 'ooii', etiqueta: 'Infraestructura OOII', corto: 'OOII' },
+  { id: 'torrecom', etiqueta: 'Torrecom', corto: 'torrecom' },
 ];
+
+/* Los dos registros de SUBTEL describen la misma antena desde dos trámites, así
+   que se fusionan. Las capas de infraestructura describen la estructura, no la
+   antena: aunque coincidan en posición no se funden con las de SUBTEL, porque
+   estar a cien metros no prueba que sea el mismo soporte. */
+const CAPAS_CERCA = ['servicio', 'autorizadas', 'ooii', 'torrecom'];
+const FUSIONAN = new Set(['servicio', 'autorizadas']);
 
 /** Distancia en la unidad que se lee mejor: metros bajo el kilómetro. */
 function distTxt(km) {
@@ -3228,7 +3297,7 @@ function cercanosDe(consulta, opciones) {
     }
   }
 
-  for (const capa of ['servicio', 'autorizadas']) {
+  for (const capa of CAPAS_CERCA) {
     if (!fuentes.has(capa)) continue;
     const d = Capas.datos(capa);
     if (!d) continue;
@@ -3237,15 +3306,19 @@ function cercanosDe(consulta, opciones) {
       if (km < 0.0005) continue;
       const f = Capas.ficha(d, i);
       /* código más posición redondeada: con el código igual y a menos de ~100 m
-         es el mismo emplazamiento en los dos registros */
-      const clave = `${f.sid || ''}|${f.lat.toFixed(3)}|${f.lon.toFixed(3)}`;
+         es el mismo emplazamiento en los dos registros de SUBTEL. Las capas que
+         no fusionan llevan su id en la clave, así nunca se mezclan. */
+      const clave = FUSIONAN.has(capa)
+        ? `${f.sid || ''}|${f.lat.toFixed(3)}|${f.lon.toFixed(3)}`
+        : `${capa}|${i}`;
       const ya = terceras.get(clave);
       if (!ya) {
         terceras.set(clave, {
           fuentes: [capa], km,
           codigo: f.sid, nombre: f.nombre, comuna: f.comuna,
           marcas: new Set(f.marcas), soporte: f.soporte, altura: f.altura,
-          tec: new Set(f.tec), bandas: new Set(f.bandas), lat: f.lat, lon: f.lon,
+          tec: new Set(f.tec), bandas: new Set(f.bandas), estado: f.estado,
+          lat: f.lat, lon: f.lon,
         });
         continue;
       }
@@ -3261,16 +3334,25 @@ function cercanosDe(consulta, opciones) {
     }
   }
 
-  const deTerceros = [...terceras.values()]
+  /* el tope vale por capa: si no, OOII con sus 16.846 puntos desplazaría a las
+     demás igual que antes los terceros desplazaban a la red propia */
+  const porCapa = new Map();
+  [...terceras.values()]
     .map((x) => Object.assign(x, {
       marca: [...x.marcas].sort().join('/'),
       tec: [...x.tec].sort((a, b) => TECNOLOGIAS_ORDEN.indexOf(a) - TECNOLOGIAS_ORDEN.indexOf(b)),
       bandas: [...x.bandas].sort((a, b) => a - b),
     }))
     .sort((a, b) => a.km - b.km)
-    .slice(0, tope);
+    .forEach((x) => {
+      /* los dos registros de SUBTEL comparten cupo: son la misma fuente vista
+         desde dos trámites, no dos inventarios distintos */
+      const k = FUSIONAN.has(x.fuentes[0]) ? 'subtel' : x.fuentes[0];
+      const lista = porCapa.get(k) || porCapa.set(k, []).get(k);
+      if (lista.length < tope) lista.push(x);
+    });
 
-  return [...propias, ...deTerceros].sort((a, b) => a.km - b.km);
+  return [...propias, ...[...porCapa.values()].flat()].sort((a, b) => a.km - b.km);
 }
 
 const TECNOLOGIAS_ORDEN = ['2G', '3G', '4G', '5G'];
@@ -3299,7 +3381,7 @@ async function buscarCercanos() {
   const op = opcionesCerca();
   /* las capas de terceros se piden acá aunque el mapa esté apagado: son parte
      de la respuesta, no un adorno del mapa */
-  const faltan = ['servicio', 'autorizadas'].filter((c) => op.fuentes.has(c) && !Capas.datos(c));
+  const faltan = CAPAS_CERCA.filter((c) => op.fuentes.has(c) && !Capas.datos(c));
   if (faltan.length) {
     avisarCerca('Cargando registros de SUBTEL…');
     await Promise.all(faltan.map((c) => Capas.activar(c)));
@@ -3314,7 +3396,7 @@ async function buscarCercanos() {
     ` Tope de ${op.tope} por fuente.` +
     (repetidas ? ` ${repetidas} consulta(s) repetida(s) se omitieron.` : '') +
     (sinCapa.length
-      ? ` No se pudieron leer las capas SUBTEL (${sinCapa.join(', ')}): sólo se listó la red propia.`
+      ? ` No se pudieron leer las capas externas (${sinCapa.join(', ')}): sólo se listó lo que sí cargó.`
       : ''));
 }
 
@@ -3358,7 +3440,8 @@ function renderCercanos() {
             <td class="name">${esc(x.nombre || '—')}</td>
             <td>${esc(x.comuna || '—')}</td>
             <td class="num">${fmt(az, 0)}° ${rumbo(az)}</td>
-            <td>${esc(x.soporte || '—')}</td>
+            <td>${esc(x.soporte || '—')}${x.estado
+              ? `<br><span class="hint">${esc(x.estado)}</span>` : ''}</td>
             <td class="num">${x.altura ? fmt(x.altura, 0) : '—'}</td>
             <td>${x.tec.length ? `<span class="techs">${
               x.tec.map((t) => `<span class="on">${t}</span>`).join('')}</span>` : '—'}</td>
@@ -3431,7 +3514,7 @@ function cablearCercanos() {
 function exportarCercanos() {
   if (!ESTADO.cercanos || !ESTADO.cercanos.length) { toast('No hay resultados que exportar.'); return; }
   const cab = ['consulta', 'consulta_lat', 'consulta_lon', 'fuente', 'operador', 'codigo',
-    'nombre', 'comuna', 'dist_m', 'dist_km', 'azimut', 'rumbo', 'soporte', 'altura_m',
+    'nombre', 'comuna', 'dist_m', 'dist_km', 'azimut', 'rumbo', 'soporte', 'estado', 'altura_m',
     'tecnologias', 'bandas_mhz', 'lat', 'lon'];
   const filas = [];
   ESTADO.cercanos.forEach(({ consulta: c, filas: fs }) => {
@@ -3439,7 +3522,7 @@ function exportarCercanos() {
       const az = azimut(c.lat, c.lon, x.lat, x.lon);
       filas.push([c.nombre, dec(c.lat, 6), dec(c.lon, 6), x.fuentes.join('+'), x.marca, x.codigo,
         x.nombre, x.comuna, Math.round(x.km * 1000), dec(x.km, 3), dec(az, 1), rumbo(az),
-        x.soporte, dec(x.altura, 0), x.tec.join('+'), x.bandas.join('+'),
+        x.soporte, x.estado || '', dec(x.altura, 0), x.tec.join('+'), x.bandas.join('+'),
         dec(x.lat, 6), dec(x.lon, 6)]);
     });
   });
@@ -3471,18 +3554,31 @@ function montarControlesCapas() {
         Mapa.pintar();
         avisarCapas('error', info.error);
       } else {
+        montarChipsMarcas();
         avisarCapas('listo');
       }
     });
   });
 
+  montarChipsMarcas();
+}
+
+/** Chips de marca: se rearman al cargar capas, porque cada una aporta las
+    suyas —operadores móviles en SUBTEL, empresas de torres en OOII—. */
+function montarChipsMarcas() {
   const marcas = $('#capas-marcas');
-  marcas.innerHTML = Object.keys(COLOR_MARCA)
-    .filter((m) => m !== 'BORDER')
+  const presentes = new Set();
+  CAPAS.forEach((c) => {
+    const d = Capas.datos(c.id);
+    if (d) (d.dic.marcas || []).forEach((m) => presentes.add(m));
+  });
+  const lista = presentes.size ? [...presentes].sort()
+    : Object.keys(COLOR_MARCA).filter((m) => m !== 'BORDER' && m !== 'OTROS');
+  marcas.innerHTML = lista
     .map((m) => `
       <label data-marca="${m}" data-activa="${ESTADO.marcas.has(m) ? 1 : 0}">
         <input type="checkbox" ${ESTADO.marcas.has(m) ? 'checked' : ''}>
-        <span class="pip" style="background:${COLOR_MARCA[m]}"></span>${m}
+        <span class="pip" style="background:${colorMarca(m)}"></span>${m}
       </label>`).join('');
   marcas.querySelectorAll('label').forEach((lab) => {
     lab.querySelector('input').addEventListener('change', (e) => {

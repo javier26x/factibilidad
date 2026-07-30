@@ -43,9 +43,10 @@ También sirve abrir `dist/index.html` directo en el navegador, sin servidor.
 ### Sitios cercanos
 
 La pestaña de entrada. Sin veredictos: se pega un listado de sitios y responde **qué hay
-alrededor de cada uno y a qué distancia** —red propia y los dos registros de SUBTEL— en una
-sola lista ordenada, con metros bajo el kilómetro. Cada fila trae registro de procedencia,
-operador, tipo de soporte con su altura, tecnologías y bandas. Exportable a CSV.
+alrededor de cada uno y a qué distancia** —red propia, los dos registros de SUBTEL y las dos
+capas de infraestructura— en una sola lista ordenada, con metros bajo el kilómetro. Cada fila
+trae registro de procedencia, operador, tipo de soporte con su altura, estado de obra donde lo
+haya, tecnologías y bandas. Exportable a CSV.
 
 Acepta los mismos formatos que el lote; una fila `A-B` consulta el entorno de **ambos**
 extremos. Las consultas repetidas se colapsan.
@@ -53,7 +54,8 @@ extremos. Las consultas repetidas se colapsan.
 Dos decisiones que cambian el resultado:
 
 - El tope de resultados es **por fuente**, no del total. Con un tope global, en zona urbana las
-  decenas de antenas de terceros desplazan a los sitios propios fuera del listado.
+  decenas de antenas de terceros desplazan a los sitios propios fuera del listado, y OOII con
+  sus 16.846 puntos haría lo mismo con las demás capas.
 - Una antena en servicio casi siempre está también autorizada, así que las dos entradas se
   **fusionan** en una fila que declara ambos registros. Una fila marcada sólo `autorizada` es
   obra permitida y no instalada, que para coubicación no es lo mismo.
@@ -91,23 +93,41 @@ extremo, con veredicto propio de fibra y de radio, excluidos los dos extremos de
 En el mapa: clic en un sitio para cargarlo como punto de análisis, clic en vacío para fijar
 un candidato, rueda para acercar, arrastrar para desplazar.
 
-### Capas de antenas SUBTEL
+### Capas externas
 
-Dos capas encendibles sobre el mapa, con filtro por marca, desde los KMZ oficiales de SUBTEL:
+Cuatro capas encendibles sobre el mapa, con filtro por marca, y disponibles también como
+fuentes en la búsqueda de cercanos:
 
-| Capa | Emplazamientos | Marcador |
-| --- | --- | --- |
-| Antenas en servicio | 12.568 | ▲ |
-| Antenas autorizadas | 16.901 | ▽ |
+| Capa | Emplazamientos | Marcador | Qué aporta |
+| --- | --- | --- | --- |
+| SUBTEL en servicio | 12.568 | ▲ | antenas operando, por operador |
+| SUBTEL autorizadas | 16.901 | ▽ | antenas con permiso, instaladas o no |
+| Infraestructura OOII | 16.846 | ■ | torres de ATC, PTI, SBA, QMC, ATP, Entel, WOM y Torrecom |
+| Portafolio Torrecom | 179 | ◆ | estado de obra, tipo de sitio, zonificación y altura validada |
 
-Cada punto trae operador, tecnologías, bandas, tipo de soporte con su altura, comuna y código
-de sitio; se ven al pasar el cursor. Los KMZ repiten cada antena una vez por tecnología y banda
-—52.432 y 29.877 placemarks— así que `extract_kmz.py` los consolida por coordenada.
+Los formatos de origen son distintos y `extract_kmz.py` maneja los dos: SUBTEL trae los campos
+como HTML dentro de `<description>` y repite cada antena por tecnología y banda —52.432 y
+29.877 placemarks para 16.953 y 12.590 posiciones—; OOII y Torrecom los traen como esquema
+`SimpleData`. En ambos casos se consolida por coordenada.
 
-A diferencia del inventario de red, estas capas **no van incrustadas**: son 1,8 MB de JSON
-entre las dos y se piden al encenderlas, así quien no las usa no las descarga. Con
+Cada punto trae lo que su fuente tenga: operador o empresa de torres, tecnologías, bandas, tipo
+de soporte con su altura, comuna, código, y en Torrecom el estado de obra (`On air`,
+`Construido`, `Landbanking`, `RFC`, `En proceso Permiso/Aviso DOM`) con su zonificación. Se ven
+al pasar el cursor y en el listado de cercanos.
+
+Las máscaras de marca se resuelven contra el diccionario **de cada capa**: los operadores
+móviles y las empresas de torres son universos distintos y no comparten numeración.
+
+A diferencia del inventario de red, estas capas **no van incrustadas**: son 2,5 MB de JSON
+entre las cuatro y se piden al encenderlas, así quien no las usa no las descarga. Con
 `dist/index.html` abierto desde el disco, el navegador prohíbe `fetch()` sobre `file://` y la
 capa queda no disponible; la interfaz lo explica. Desde el sitio publicado funcionan.
+
+Torrecom aparece en las dos capas de infraestructura —167 puntos dentro de OOII y 179 en su
+portafolio propio— y no se fusionan: son dos volcados de distinta fecha, y ver ambos permite
+contrastarlos. Sólo los dos registros de SUBTEL se fusionan entre sí, porque describen la
+misma antena desde dos trámites; una capa de infraestructura describe la estructura, no la
+antena, y coincidir en posición no prueba que sea el mismo soporte.
 
 ### Fondos cartográficos
 
@@ -228,9 +248,13 @@ Los dumps CGI no traen el medio de transmisión de cada sitio ni la altimetría 
 # 1. consolidar los sitios desde los workbooks CGI
 python3 tools/extract_sites.py CGI_20260713.xlsx CGI_HUAWEI_20260713.xlsx -o data/sites.json
 
-# 2. consolidar las capas de antenas SUBTEL
+# 2. consolidar las capas externas (acepta .kmz y .kml)
 python3 tools/extract_kmz.py antenas_servicio_chile.kmz    -o data/capa_servicio.json
 python3 tools/extract_kmz.py antenas_autorizadas_chile.kmz -o data/capa_autorizadas.json
+python3 tools/extract_kmz.py Consolidado_OOII_Mar_2026.kml -o data/capa_ooii.json \
+    --titulo "Infraestructura OOII (consolidado mar 2026)"
+python3 tools/extract_kmz.py Portafolio_Torrecom_2026.kmz  -o data/capa_torrecom.json \
+    --titulo "Portafolio Torrecom 2026"
 
 # 3. empaquetar la web y copiar las capas a dist/
 python3 tools/build_web.py
@@ -246,12 +270,12 @@ repetidas (1,9 MB → 531 KB) y lo incrusta en el HTML.
 
 ```
 data/sites.json      inventario consolidado de sitios
-data/capa_*.json     capas de antenas SUBTEL (servidas aparte, no incrustadas)
+data/capa_*.json     capas externas: SUBTEL, OOII, Torrecom (servidas aparte)
 web/app.js           motor de cálculo e interfaz
 web/app.css          hoja de estilos (tema claro y oscuro)
 web/body.html        estructura de la página
 tools/extract_sites.py   xlsx CGI  →  sites.json
-tools/extract_kmz.py     kmz SUBTEL →  capa_*.json
+tools/extract_kmz.py     kmz/kml externos →  capa_*.json
 tools/build_web.py       sites.json + web/  →  dist/
 dist/index.html      documento completo, listo para abrir
 dist/artifact.html    mismo contenido sin <html>/<head>/<body>

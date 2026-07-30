@@ -52,6 +52,12 @@ Bodega Lampa; -33.28617; -70.87233
             <label data-fuente="autorizadas" data-activa="1">
               <input type="checkbox" checked><span class="glifo">▽</span>SUBTEL autorizadas (16.901)
             </label>
+            <label data-fuente="ooii" data-activa="1">
+              <input type="checkbox" checked><span class="glifo">■</span>Infraestructura OOII (16.846)
+            </label>
+            <label data-fuente="torrecom" data-activa="1">
+              <input type="checkbox" checked><span class="glifo">◆</span>Torrecom (179)
+            </label>
           </div>
           <p class="hint" id="cerca-estado"></p>
         </div>
@@ -364,13 +370,21 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         satelital son más extensos. Para uso comercial hay que revisarlos. Sin facturación, el
         fondo Satélite de Esri ya cubre Chile completo sin clave.</p>
 
-      <h2>Capas SUBTEL</h2>
-      <p>Los registros de antenas de SUBTEL —autorizadas y en servicio— se pueden encender y
-        apagar sobre el mapa, con filtro por marca. Son 16.901 y 12.568 emplazamientos, cada uno
-        con su soporte, altura, tecnologías, bandas y comuna, consolidados desde los KMZ
-        oficiales: cada antena aparece ahí repetida una vez por tecnología y banda, y se agrupan
-        por coordenada. Sirven para ver de quién es la infraestructura del entorno y qué
-        estructura hay disponible para colocarse.</p>
+      <h2>Capas externas</h2>
+      <p>Cuatro capas se pueden encender y apagar sobre el mapa, con filtro por marca, y sirven
+        además como fuentes en la búsqueda de cercanos: los dos registros de antenas de SUBTEL
+        —en servicio y autorizadas, 12.568 y 16.901 emplazamientos—, el consolidado de
+        infraestructura OOII con 16.846 torres de ATC, PTI, SBA, QMC, ATP, Entel, WOM y
+        Torrecom, y el portafolio propio de Torrecom con 179 sitios.</p>
+      <p>El portafolio de Torrecom es el más rico: trae estado de obra —On air, Construido,
+        Landbanking, RFC, En proceso Permiso/Aviso DOM—, tipo de sitio, zonificación y altura
+        validada. Eso es lo que decide si una estructura sirve hoy para coubicarse o todavía no
+        existe.</p>
+      <p>Torrecom aparece en las dos capas de infraestructura y no se fusionan: son volcados de
+        distinta fecha y contrastarlos es parte de la utilidad. Sólo los dos registros de SUBTEL
+        se funden entre sí, porque describen la misma antena desde dos trámites; una capa de
+        infraestructura describe la estructura, no la antena, y coincidir en posición no prueba
+        que sea el mismo soporte.</p>
 
       <h2>Alternativas</h2>
       <p>Un vano no se evalúa solo. Para cada enlace A–B se calculan además los nodos de la red

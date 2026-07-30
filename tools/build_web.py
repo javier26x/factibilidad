@@ -122,6 +122,8 @@ def construir(datos_json, salida_dir):
 CAPAS_SUBTEL = {
     'capas/servicio.json': 'capa_servicio.json',
     'capas/autorizadas.json': 'capa_autorizadas.json',
+    'capas/ooii.json': 'capa_ooii.json',
+    'capas/torrecom.json': 'capa_torrecom.json',
 }
 
 
