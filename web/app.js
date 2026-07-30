@@ -1094,8 +1094,100 @@ const FONDOS = [
     maxZ: 19, velo: 0.28,
     credito: 'Esri · Maxar · Earthstar Geographics',
   },
+  /* Google exige clave propia con facturación habilitada, así que estas tres
+     entradas quedan inertes hasta que se pegue una en Parámetros. Se usa la Map
+     Tiles API, que es la vía licenciada; pedir las teselas a los servidores
+     internos de Google Maps infringe sus términos y no se hace. */
+  {
+    id: 'g-satelite', nombre: 'Google satélite', google: { mapType: 'satellite' },
+    maxZ: 22, velo: 0.28, credito: 'Google',
+  },
+  {
+    id: 'g-hibrido', nombre: 'Google satélite + rótulos',
+    google: { mapType: 'satellite', layerTypes: ['layerRoadmap'] },
+    maxZ: 22, velo: 0.24, credito: 'Google',
+  },
+  {
+    id: 'g-calles', nombre: 'Google callejero', google: { mapType: 'roadmap' },
+    maxZ: 22, velo: 0.08, credito: 'Google',
+  },
   { id: 'ninguno', nombre: 'Sin fondo', url: null, maxZ: 19, velo: 0, credito: '' },
 ];
+
+/**
+ * Sesiones de la Map Tiles API. El token dura alrededor de dos semanas, así que
+ * se guarda con su vencimiento y se renueva sólo cuando caduca.
+ */
+const SesionGoogle = (function () {
+  const LS_G = 'factibilidad.google.v1';
+  let enVuelo = {};
+  let error = null;
+  /* Copia en memoria además de localStorage: si el almacenamiento no está
+     disponible —o falla la escritura— sin esto se pediría una sesión nueva en
+     cada repintado, y cada una es una llamada facturable. */
+  let memoria = {};
+
+  const leer = () => {
+    try {
+      return Object.assign(JSON.parse(localStorage.getItem(LS_G) || '{}'), memoria);
+    } catch (e) { return memoria; }
+  };
+  const escribir = (d) => {
+    memoria = Object.assign({}, memoria, d);
+    try { localStorage.setItem(LS_G, JSON.stringify(d)); } catch (e) { /* sin almacenamiento */ }
+  };
+  const clave = (cfg) => `${cfg.mapType}|${(cfg.layerTypes || []).join(',')}`;
+
+  /** Token vigente, o null si aún no hay: en ese caso se pide en segundo plano. */
+  function token(cfg, alLlegar) {
+    const apiKey = (ESTADO.params.googleKey || '').trim();
+    if (!apiKey) { error = 'falta la clave de Google'; return null; }
+    const k = clave(cfg);
+    const guardado = leer()[k];
+    /* margen de una hora para no estrenar un token a punto de vencer */
+    if (guardado && guardado.session && guardado.expira > Date.now() + 3600e3) {
+      error = null;
+      return guardado.session;
+    }
+    if (enVuelo[k]) return null;
+
+    enVuelo[k] = true;
+    fetch(`https://tile.googleapis.com/v1/createSession?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign(
+        { mapType: cfg.mapType, language: 'es-CL', region: 'CL' },
+        cfg.layerTypes ? { layerTypes: cfg.layerTypes } : {})),
+    })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!ok || !j.session) {
+          throw new Error((j.error && j.error.message) || 'la API no entregó sesión');
+        }
+        const d = leer();
+        /* expiry viene como segundos epoch en cadena; si algún día cambia de
+           forma, el respaldo de 12 h sólo hace que se renueve más seguido */
+        d[k] = { session: j.session, expira: Number(j.expiry) * 1000 || Date.now() + 12 * 36e5 };
+        escribir(d);
+        error = null;
+        if (alLlegar) alLlegar();
+      })
+      .catch((e) => { error = e.message || 'no se pudo crear la sesión'; if (alLlegar) alLlegar(); })
+      .finally(() => { delete enVuelo[k]; });
+    return null;
+  }
+
+  return {
+    token,
+    get error() { return error; },
+    olvidar() {
+      memoria = {};
+      try { localStorage.removeItem(LS_G); } catch (e) { /* sin almacenamiento */ }
+      error = null;
+      enVuelo = {};
+    },
+  };
+})();
 
 const fondoPorId = (id) => FONDOS.find((f) => f.id === id) || FONDOS[0];
 
@@ -1155,6 +1247,13 @@ const Mapa = (function () {
   }
 
   function urlTesela(z, x, y) {
+    if (fondo.google) {
+      const t = SesionGoogle.token(fondo.google, repintarPronto);
+      if (!t) return null;                 // sin sesión todavía: se repinta al llegar
+      const apiKey = encodeURIComponent((ESTADO.params.googleKey || '').trim());
+      return `https://tile.googleapis.com/v1/2dtiles/${z}/${x}/${y}` +
+             `?session=${encodeURIComponent(t)}&key=${apiKey}`;
+    }
     const plantilla = fondo.url[temaOscuro() && fondo.url.oscuro ? 'oscuro' : 'claro'];
     const sub = fondo.subs ? fondo.subs[(x + y) % fondo.subs.length] : '';
     return plantilla
@@ -1169,17 +1268,19 @@ const Mapa = (function () {
     const clave = `${fondo.id}/${temaOscuro() ? 'd' : 'l'}/${z}/${x}/${y}`;
     let t = teselas.get(clave);
     if (t) return t;
+    const src = urlTesela(z, x, y);
+    if (!src) return { estado: 'esperando' };     // sin cachear: la sesión va a llegar
     const img = new Image();
     t = { img, estado: 'cargando' };
     teselas.set(clave, t);
     img.onload = () => { t.estado = 'ok'; aciertos++; repintarPronto(); };
     img.onerror = () => { t.estado = 'error'; fallos++; repintarPronto(); };
-    img.src = urlTesela(z, x, y);
+    img.src = src;
     return t;
   }
 
   function pintarFondo(t) {
-    if (!fondo.url) return false;
+    if (!fondo.url && !fondo.google) return false;
     const z = Math.max(0, Math.min(fondo.maxZ, Math.round(Math.log2((TAU * escala) / 256))));
     const n = Math.pow(2, z);
     const lado = (TAU * escala) / n;               // tamaño en pantalla de cada tesela
@@ -1356,7 +1457,9 @@ const Mapa = (function () {
     if (!el) return;
     if (conFondo) {
       el.textContent = fondo.credito;
-    } else if (fondo.url && fallos > 0 && aciertos === 0) {
+    } else if (fondo.google && SesionGoogle.error) {
+      el.textContent = `Google no disponible: ${SesionGoogle.error}`;
+    } else if ((fondo.url || fondo.google) && fallos > 0 && aciertos === 0) {
       el.textContent = 'Sin fondo cartográfico: no hay acceso a las teselas';
     } else {
       el.textContent = '';
@@ -1589,6 +1692,7 @@ const Mapa = (function () {
       limpiarTeselas();
       pintar();
     },
+    reintentarFondo() { SesionGoogle.olvidar(); limpiarTeselas(); pintar(); },
     fijar(nuevas) { capas = Object.assign({ candidatos: [], enlaces: [], nodos: [] }, nuevas); pintar(); },
     encuadrarEn(puntos, margen) { if (listo) { encuadrar(puntos, margen); pintar(); } },
     verTodo() { if (listo) { encuadrar(RED); pintar(); } },
@@ -1644,6 +1748,7 @@ const PARAMS_DEFECTO = {
   fondo: 'carto',
   ruteo: true,
   altimetria: true,
+  googleKey: '',
 };
 
 const ESTADO = {
@@ -2799,6 +2904,16 @@ const CAMPOS_PARAM = [
     ['autoLluvia', 'Tasa de lluvia según región del nodo más cercano', 'check', {}],
     ['R001', 'Tasa de lluvia R0,01 manual (mm/h)', 'number', { min: 0, max: 120, step: 1 }],
   ]],
+  ['Mapa', [
+    ['googleKey', 'Clave de Google Maps Platform', 'secreto', {
+      placeholder: 'AIza…',
+      nota: 'Sólo hace falta para los fondos «Google». Requiere una clave propia con ' +
+        'facturación habilitada y la Map Tiles API activada. Queda guardada en este navegador, ' +
+        'no se envía a ningún otro lugar y no se incluye en ninguna exportación. Como en un ' +
+        'sitio estático la clave viaja al navegador y queda a la vista, restringila por ' +
+        'referente HTTP a tu dominio y limitala a la Map Tiles API.',
+    }],
+  ]],
   ['Fibra óptica', [
     ['ruteo', 'Medir el tendido por calles (OSRM)', 'check', {}],
     ['sinuosidadUrbana', 'Sinuosidad urbana (si no hay ruteo)', 'number', { min: 1, max: 2.5, step: 0.05 }],
@@ -2821,6 +2936,12 @@ function renderParams() {
             return `<label class="field" style="flex-direction:row;align-items:center;gap:8px">
               <input type="checkbox" data-param="${k}" ${v ? 'checked' : ''} style="width:auto">
               <span>${etiqueta}</span></label>`;
+          }
+          if (tipo === 'secreto') {
+            return `<label class="field"><span>${etiqueta}</span>
+              <input type="password" data-param="${k}" value="${esc(v || '')}"
+                autocomplete="off" spellcheck="false" placeholder="${o.placeholder || ''}">
+              </label>${o.nota ? `<p class="hint">${o.nota}</p>` : ''}`;
           }
           if (tipo === 'select') {
             return `<label class="field"><span>${etiqueta}</span>
@@ -2876,6 +2997,9 @@ function renderParams() {
       ESTADO.params[k] = el.type === 'checkbox' ? el.checked
         : (typeof PARAMS_DEFECTO[k] === 'string' ? el.value : parseFloat(el.value));
       guardar();
+      /* otra clave invalida la sesión y las teselas ya pedidas */
+      if (k === 'googleKey') Mapa.reintentarFondo();
+      if (k === 'altimetria' || k === 'ruteo') { medirTendidos(); medirPerfiles(); }
       if (ESTADO.resultados.length) { ejecutarSilencioso(); }
     });
   });

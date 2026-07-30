@@ -9,9 +9,10 @@ coordenadas, comuna, región, altura de antenas y tecnologías presentes, desde 
 Magallanes.
 
 Todo el cálculo corre en el navegador y el inventario de red va incrustado: `dist/index.html`
-se abre sin servidor. Tres servicios externos, todos gratuitos y sin clave, mejoran el
-resultado cuando hay red —ruteo por calles, altimetría y fondos cartográficos— y la herramienta
-funciona sin ellos, declarando en cada caso qué quedó estimado.
+se abre sin servidor. Tres servicios externos gratuitos y sin clave mejoran el resultado cuando
+hay red —ruteo por calles, altimetría y fondos cartográficos—, y la herramienta funciona sin
+ellos declarando en cada caso qué quedó estimado. Los fondos de Google son opcionales y sí
+requieren clave propia con facturación.
 
 ## Dónde está publicado
 
@@ -85,7 +86,7 @@ capa queda no disponible; la interfaz lo explica. Desde el sitio publicado funci
 
 ### Fondos cartográficos
 
-Cinco opciones, todas gratuitas y sin clave de API:
+Cinco opciones gratuitas y sin clave de API:
 
 | Fondo | Fuente | Para qué |
 | --- | --- | --- |
@@ -95,6 +96,38 @@ Cinco opciones, todas gratuitas y sin clave de API:
 | Satélite | Esri World Imagery | edificación y vegetación, lo que obstruye los saltos urbanos |
 | Sin fondo | — | sólo retícula y sitios |
 
+Y tres fondos de **Google**, que requieren clave propia: `Google satélite`,
+`Google satélite + rótulos` y `Google callejero`.
+
+#### Usar Google
+
+Google Maps no tiene nivel gratuito sin registro: hace falta una clave de Google Maps Platform
+con **facturación habilitada** y la **Map Tiles API** activada. Consultá los precios vigentes
+antes de encenderlo, porque el cobro es por tesela servida.
+
+Se pega en **Parámetros › Mapa › Clave de Google Maps Platform**. Queda guardada sólo en ese
+navegador: no se versiona, no viaja al repositorio y no aparece en ninguna exportación. Sin
+clave, esos tres fondos quedan inertes y el mapa lo dice, sin hacer ninguna llamada.
+
+Se usa la vía licenciada: `createSession` para obtener un token —que dura unas dos semanas y se
+guarda con su vencimiento, así no se pide uno por sesión de trabajo— y luego las teselas de
+`2dtiles`. **No** se piden teselas a los servidores internos de Google Maps: eso infringe sus
+términos de servicio y puede costar la cuenta, así que no está implementado y no conviene
+pedirlo.
+
+Dos advertencias que valen más que la comodidad:
+
+- En un sitio estático la clave viaja al navegador y **queda a la vista de cualquiera**.
+  Restringila por referente HTTP a tu dominio y limitala a la Map Tiles API, o alguien te
+  factura las teselas.
+- La atribución que muestro es el texto «Google». Los requisitos de marca de Google para
+  imagen satelital son más extensos y las atribuciones por viewport se piden a otro endpoint
+  que no llamo. Si esto va a uso comercial, revisá esos requisitos: no puedo garantizarlos
+  desde acá.
+
+Si no querés habilitar facturación, `Satélite` (Esri World Imagery) ya está disponible sin
+clave y cubre Chile completo.
+
 La capa de teselas está escrita sobre el mismo canvas que el resto del mapa, sin Leaflet ni
 otra dependencia: el lienzo ya trabaja en Web Mercator, así que basta convertir la escala al
 nivel de zoom del esquema estándar de teselas. Si las teselas no se pueden cargar —por
@@ -102,7 +135,7 @@ ejemplo bajo una política que bloquee hosts externos— el mapa cae solo a la v
 y lo indica, sin perder ninguna de las capas de análisis.
 
 El crédito de la fuente se muestra siempre sobre el mapa, como exigen las licencias de
-OpenStreetMap, CARTO, OpenTopoMap y Esri.
+OpenStreetMap, CARTO, OpenTopoMap, Esri y Google.
 
 ## Qué calcula
 

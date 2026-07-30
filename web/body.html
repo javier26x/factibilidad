@@ -282,6 +282,18 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         supuesto. Y si tú cargas cotas a mano, mandan las tuyas: puedes conocer un edificio que
         el modelo no ve.</p>
 
+      <h2>Fondos de Google</h2>
+      <p>Los tres fondos de Google usan la Map Tiles API, que es la vía licenciada: exigen clave
+        propia con facturación habilitada, que se pega en Parámetros y queda guardada sólo en
+        este navegador. Sin clave quedan inertes y no se hace ninguna llamada. Pedir teselas a
+        los servidores internos de Google Maps infringe sus términos de servicio, así que no
+        está implementado.</p>
+      <p>Dos advertencias: en un sitio estático la clave queda a la vista de cualquiera, así que
+        conviene restringirla por referente HTTP y limitarla a la Map Tiles API; y la atribución
+        que se muestra es el texto «Google», mientras los requisitos de marca para imagen
+        satelital son más extensos. Para uso comercial hay que revisarlos. Sin facturación, el
+        fondo Satélite de Esri ya cubre Chile completo sin clave.</p>
+
       <h2>Capas SUBTEL</h2>
       <p>Los registros de antenas de SUBTEL —autorizadas y en servicio— se pueden encender y
         apagar sobre el mapa, con filtro por marca. Son 16.901 y 12.568 emplazamientos, cada uno
