@@ -1,0 +1,11 @@
+# dependencias usadas solo para las pruebas de navegador (Playwright)
+node_modules/
+package.json
+package-lock.json
+
+# fragmento intermedio para publicar; el entregable es dist/factibilidad.html
+dist/artifact-body.html
+
+# reportes CGI originales: son insumo, no se versionan
+*.xlsx
+*.xlsm

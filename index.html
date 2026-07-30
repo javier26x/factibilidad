@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factibilidad de enlaces FO / MMOO — red móvil</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">◈</span>
+    <div class="brand-txt">
+      <h1>Factibilidad de enlaces <span class="fo">FO</span> / <span class="mw">MMOO</span></h1>
+      <p class="sub" id="metaRed">cargando inventario…</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <div class="buscador">
+      <input id="qSitio" type="search" placeholder="Buscar sitio de la red (código, nombre, comuna)…" autocomplete="off" spellcheck="false">
+      <div id="qRes" class="q-res" hidden></div>
+    </div>
+    <button id="btnTema" class="ghost icon" title="Cambiar tema" aria-label="Cambiar tema">◐</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <aside class="col-izq">
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="num">1</span> Sitios o enlaces a evaluar</h2>
+      </div>
+      <textarea id="entrada" rows="9" spellcheck="false" placeholder="Un sitio o enlace por línea. Ejemplos:
+
+Cliente Norte; -33.3500; -70.6800; h=25
+Bodega Sur    -33.6100 -70.7300
+Radio Base X  33°26'36&quot;S 70°39'04&quot;W
+Punto UTM     19S 345678 6298765
+13_184
+Cliente X -33.44,-70.65 -> 13_184"></textarea>
+      <div class="row">
+        <button id="btnEvaluar" class="primary">Evaluar factibilidad</button>
+        <button id="btnEjemplo" class="ghost sm">Cargar ejemplo</button>
+        <button id="btnLimpiar" class="ghost sm">Limpiar</button>
+      </div>
+      <div class="row wrap file-row">
+        <label class="file">
+          <span>Cargar CSV / TSV…</span>
+          <input type="file" id="archivo" accept=".csv,.tsv,.txt">
+        </label>
+        <span class="hint">Desde Excel: copiar las celdas y pegar arriba.</span>
+      </div>
+      <details class="fmt">
+        <summary>Formatos que reconoce</summary>
+        <ul>
+          <li><b>Grados decimales</b> — <code>Nombre; -33.4433; -70.6512</code> (coma, punto y coma, tab o espacio)</li>
+          <li><b>Sexagesimal</b> — <code>Nombre 33°26'36"S 70°39'04"W</code></li>
+          <li><b>UTM</b> — <code>Nombre 19S 345678 6298765</code> (husos 17–19)</li>
+          <li><b>Código de la red</b> — <code>13_184</code> toma las coordenadas del inventario</li>
+          <li><b>Enlace explícito A → B</b> — <code>Cliente X -33.44,-70.65 -&gt; 13_184</code></li>
+          <li><b>Altura de torre</b> — agregar <code>h=30</code> / <code>alt=30</code> / <code>@30</code> en la línea</li>
+          <li><b>Tabla con cabecera</b> — una fila con <code>nombre lat lon altura</code> y luego los datos</li>
+          <li>Líneas en blanco y las que empiezan con <code>#</code> se ignoran</li>
+        </ul>
+      </details>
+      <div id="errores" class="errores" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="num">2</span> Parámetros</h2>
+        <button id="btnReset" class="ghost sm">Restablecer</button>
+      </div>
+      <details open class="grupo">
+        <summary>Red base <span class="badge" id="badgeRed"></span></summary>
+        <div id="paramsRed" class="params"></div>
+      </details>
+      <details class="grupo">
+        <summary>Fibra óptica <span class="chip fo">FO</span></summary>
+        <div id="paramsFO" class="params"></div>
+      </details>
+      <details class="grupo">
+        <summary>Microondas <span class="chip mw">MMOO</span></summary>
+        <div id="paramsMW" class="params"></div>
+      </details>
+      <p class="nota">
+        Los valores son de <b>planificación preliminar</b>. La factibilidad definitiva
+        requiere perfil de terreno (DEM), verificación de ruta de fibra y visita a sitio.
+      </p>
+    </section>
+  </aside>
+
+  <section class="col-der">
+    <div id="kpis" class="kpis" hidden></div>
+
+    <section class="card" id="cardTabla" hidden>
+      <div class="card-head">
+        <h2>Resultados</h2>
+        <div class="row">
+          <button id="btnCsv" class="ghost sm">Exportar CSV</button>
+        </div>
+      </div>
+      <div class="tabla-wrap">
+        <table id="tabla">
+          <thead>
+            <tr>
+              <th data-k="i" class="c">#</th>
+              <th data-k="nombre">Punto / enlace</th>
+              <th data-k="comuna">Comuna</th>
+              <th data-k="foKm" class="n">FO ruta</th>
+              <th data-k="foNodo">Nodo FO</th>
+              <th data-k="foCat" class="c">FO</th>
+              <th data-k="mwKm" class="n">MMOO dist</th>
+              <th data-k="mwPar">Sitio par</th>
+              <th data-k="mwBanda" class="c">Banda</th>
+              <th data-k="mwDisp" class="n">Disp.</th>
+              <th data-k="mwCat" class="c">MMOO</th>
+              <th data-k="reco">Recomendación</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <p class="hint">Clic en una fila para ver el detalle de ingeniería. Clic en una columna para ordenar.</p>
+    </section>
+
+    <section class="card" id="cardMapa" hidden>
+      <div class="card-head">
+        <h2>Mapa</h2>
+        <div class="leyenda">
+          <span class="lg red">red base</span>
+          <span class="lg cand">candidato</span>
+          <span class="lg lfo">enlace FO</span>
+          <span class="lg lmw">enlace MMOO</span>
+          <button id="btnMapaFit" class="ghost sm">Encuadrar</button>
+        </div>
+      </div>
+      <canvas id="mapa" height="420"></canvas>
+      <p class="hint">Rueda para zoom, arrastrar para desplazar. Los puntos grises son los sitios de la red base.</p>
+    </section>
+
+    <div id="detalle"></div>
+
+    <section class="card vacio" id="cardVacio">
+      <h2>Cómo funciona</h2>
+      <p>
+        El inventario de la red (hojas <b>2G / 3G / LTE / 5G</b> de los reportes CGI de Nokia y Huawei)
+        se consolidó en <b id="nSitios">…</b> sitios únicos con coordenada, tecnologías, altura de
+        antenas y entorno. Ese inventario es la <b>base</b>: cada punto que pegues se compara contra él.
+      </p>
+      <div class="grid2">
+        <div>
+          <h3><span class="chip fo">FO</span> Fibra óptica</h3>
+          <ul>
+            <li>Busca los sitios más cercanos que sirven como <b>nodo de conexión</b> (filtrables por tecnología, para exigir presencia de transporte).</li>
+            <li>Convierte la distancia recta en <b>km de ruta</b> con un factor de sinuosidad distinto para urbano y rural.</li>
+            <li>Estima cantidad de postes y costo con los valores unitarios que definas.</li>
+            <li>Clasifica en ALTA / MEDIA / BAJA / NO VIABLE según umbrales de km de ruta.</li>
+          </ul>
+        </div>
+        <div>
+          <h3><span class="chip mw">MMOO</span> Microondas</h3>
+          <ul>
+            <li>Evalúa cada sitio par candidato: distancia, azimut y <b>despeje</b> (bulbo terrestre + 0,6·F1 de Fresnel).</li>
+            <li>Calcula la <b>altura mínima de torre</b> necesaria y cuánto falta respecto de la altura actual.</li>
+            <li>Presupuesto de enlace: FSL, ganancias, RSL y margen de desvanecimiento.</li>
+            <li>Disponibilidad por <b>lluvia (ITU-R P.530/P.838)</b> y <b>multitrayecto</b>, y elige la banda más alta que cumpla el objetivo.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="hint">
+        Pega tus puntos en el panel izquierdo y presiona <b>Evaluar factibilidad</b>.
+      </p>
+    </section>
+  </section>
+</main>
+
+<script src="data/sites.js"></script>
+<script src="js/geo.js"></script>
+<script src="js/radio.js"></script>
+<script src="js/inventory.js"></script>
+<script src="js/parse.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
