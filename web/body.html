@@ -102,8 +102,9 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         <!-- cotas: sólo tiene sentido sobre un vano concreto -->
         <div class="field-group" id="cotas-panel" data-panel-modo="enlace" style="display:none">
           <div class="group-label">Cotas de terreno (opcional)</div>
-          <p class="hint">Con estas tres cotas el despeje se resuelve de verdad; sin ellas el
-            veredicto de radio queda pendiente de perfil topográfico.</p>
+          <p class="hint">Opcional: el despeje ya se resuelve sobre perfil SRTM. Cargar cotas
+            propias tiene precedencia sobre el modelo, para cuando conoces un obstáculo que él
+            no ve —un edificio nuevo, por ejemplo.</p>
           <div class="row2">
             <label class="field"><span>Cota en A (msnm)</span><input type="number" id="cotaA"></label>
             <label class="field"><span>Cota en B (msnm)</span><input type="number" id="cotaB"></label>
@@ -139,6 +140,13 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
               <span class="sr">Fondo cartográfico</span>
               <select id="fondo" style="width:auto"></select>
             </label>
+          </div>
+          <div class="capas-bar">
+            <span class="capas-titulo">Capas SUBTEL</span>
+            <div id="capas-toggles" class="capas-toggles"></div>
+            <div class="spacer"></div>
+            <div id="capas-marcas" class="capas-marcas"></div>
+            <span class="hint" id="capas-estado"></span>
           </div>
           <div class="mapwrap">
             <canvas id="map"></canvas>
@@ -245,10 +253,42 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         declaradas alcanzarían en terreno plano, y lo dice: el veredicto queda condicionado a
         perfil. Con las tres cotas cargadas —extremo A, extremo B y obstáculo— el despeje se
         resuelve con holgura numérica y el veredicto pasa a ser una conclusión.</p>
-      <p>El fondo <b>Topográfico</b> del mapa trae curvas de nivel y sombreado de relieve:
-        sirve para ver de entrada si un vano cruza un cordón montañoso, antes de ir a buscar
-        cotas. El fondo <b>Satélite</b> muestra edificación y vegetación, que es lo que suele
-        obstruir los saltos urbanos cortos. Ninguno de los dos sustituye el perfil.</p>
+      <p>Cuando no hay ni perfil ni cotas, el despeje sólo se tamiza en terreno plano y la
+        columna <b>Despeje</b> de la tabla lo dice: <b>plano</b>. Un vano marcado así puede
+        cerrar el presupuesto de enlace y aun así no ver el otro extremo. Sólo
+        <b>SRTM ok</b> o <b>cotas ok</b> significan línea de vista resuelta.</p>
+      <p>El fondo <b>Topográfico</b> del mapa trae curvas de nivel y sombreado de relieve, y el
+        fondo <b>Satélite</b> muestra edificación y vegetación, que es lo que suele obstruir los
+        saltos urbanos cortos. Sirven para mirar el terreno con los ojos; el veredicto lo da el
+        perfil.</p>
+
+      <h2>Perfil de terreno</h2>
+      <p>El despeje se resuelve sobre altimetría real: se muestrean 100 puntos sobre el círculo
+        máximo del vano, se piden sus cotas al modelo digital SRTM de 30 m y se evalúa el
+        despeje en cada uno contra abultamiento más Fresnel más clutter. El punto crítico no es
+        el medio del vano sino el de menor holgura, y es el que decide.</p>
+      <p>Se perfila el vano que se está mirando, no los ocho: el servicio admite una llamada por
+        segundo. Si el nodo más conveniente no tiene línea de vista, la herramienta sigue
+        perfilando los siguientes por distancia hasta encontrar uno que sí, con tope. Al pinchar
+        cualquier fila se perfila ese vano.</p>
+      <p>La reelección del mejor vano se hace sólo entre los que ya tienen perfil: comparar uno
+        resuelto sobre terreno medido contra otros que siguen en terreno plano sería comparar
+        cosas distintas, y ocultaría justamente el hallazgo.</p>
+      <p>Dos límites que conviene tener presentes. SRTM es radar, así que en zonas con
+        vegetación su retorno cae en algún punto del dosel: incluye algo de los árboles, de
+        forma poco confiable. Para árboles y edificios medidos hace falta un modelo de
+        superficie LiDAR, que no existe gratuito para todo Chile; por eso el clutter sigue
+        siendo un margen, sólo que ahora encima de terreno medido y no de terreno plano
+        supuesto. Y si tú cargas cotas a mano, mandan las tuyas: puedes conocer un edificio que
+        el modelo no ve.</p>
+
+      <h2>Capas SUBTEL</h2>
+      <p>Los registros de antenas de SUBTEL —autorizadas y en servicio— se pueden encender y
+        apagar sobre el mapa, con filtro por marca. Son 16.901 y 12.568 emplazamientos, cada uno
+        con su soporte, altura, tecnologías, bandas y comuna, consolidados desde los KMZ
+        oficiales: cada antena aparece ahí repetida una vez por tecnología y banda, y se agrupan
+        por coordenada. Sirven para ver de quién es la infraestructura del entorno y qué
+        estructura hay disponible para colocarse.</p>
 
       <h2>Alternativas</h2>
       <p>Un vano no se evalúa solo. Para cada enlace A–B se calculan además los nodos de la red

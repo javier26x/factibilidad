@@ -652,6 +652,49 @@ td.strong { font-weight: 600; }
   pointer-events: none;
   white-space: pre;
 }
+/* controles de las capas SUBTEL, sobre el mapa */
+.capas-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.capas-titulo {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.capas-toggles, .capas-marcas { display: flex; gap: 6px; flex-wrap: wrap; }
+.capas-toggles label, .capas-marcas label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--fs-micro);
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+}
+.capas-toggles label:hover, .capas-marcas label:hover { border-color: var(--ink-3); }
+.capas-toggles input, .capas-marcas input { accent-color: var(--accent); margin: 0; }
+.capas-toggles label[data-activa="1"], .capas-marcas label[data-activa="1"] {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.capas-marcas .pip {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.capas-toggles .glifo { font-family: var(--mono); font-size: 11px; line-height: 1; }
+
 /* crédito de la fuente cartográfica: exigido por las licencias de OSM,
    CARTO, OpenTopoMap y Esri */
 .map-credito {

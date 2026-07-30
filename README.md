@@ -8,8 +8,10 @@ de Huawei): 8 hojas de celdas 2G / 3G / LTE / 5G que se consolidan en **4.532 si
 coordenadas, comuna, región, altura de antenas y tecnologías presentes, desde Arica hasta
 Magallanes.
 
-Todo corre en el navegador, sin servidor ni dependencias externas: `dist/index.html` es un
-único archivo autocontenido con los datos incrustados.
+Todo el cálculo corre en el navegador y el inventario de red va incrustado: `dist/index.html`
+se abre sin servidor. Tres servicios externos, todos gratuitos y sin clave, mejoran el
+resultado cuando hay red —ruteo por calles, altimetría y fondos cartográficos— y la herramienta
+funciona sin ellos, declarando en cada caso qué quedó estimado.
 
 ## Dónde está publicado
 
@@ -41,7 +43,7 @@ trabajo:
 | Modo | Entrada | Qué responde |
 | --- | --- | --- |
 | **Sitio** | un punto (lat/lon o código de un sitio de la red) | los nodos de red más cercanos, ordenados, con veredicto de fibra y de radio para cada uno |
-| **Enlace A–B** | dos extremos y, si se tienen, las cotas del terreno | balance completo del vano banda por banda y despeje resuelto con holgura numérica |
+| **Enlace A–B** | dos extremos, con cotas propias si se tienen | balance completo del vano banda por banda, despeje sobre perfil de terreno y alternativas a cada extremo |
 | **Lote** | filas pegadas desde una planilla | una tabla con el veredicto de cada entrada, exportable a CSV |
 
 El formato de lote acepta, una fila por sitio o por enlace:
@@ -62,6 +64,24 @@ extremo, con veredicto propio de fibra y de radio, excluidos los dos extremos de
 
 En el mapa: clic en un sitio para cargarlo como punto de análisis, clic en vacío para fijar
 un candidato, rueda para acercar, arrastrar para desplazar.
+
+### Capas de antenas SUBTEL
+
+Dos capas encendibles sobre el mapa, con filtro por marca, desde los KMZ oficiales de SUBTEL:
+
+| Capa | Emplazamientos | Marcador |
+| --- | --- | --- |
+| Antenas en servicio | 12.568 | ▲ |
+| Antenas autorizadas | 16.901 | ▽ |
+
+Cada punto trae operador, tecnologías, bandas, tipo de soporte con su altura, comuna y código
+de sitio; se ven al pasar el cursor. Los KMZ repiten cada antena una vez por tecnología y banda
+—52.432 y 29.877 placemarks— así que `extract_kmz.py` los consolida por coordenada.
+
+A diferencia del inventario de red, estas capas **no van incrustadas**: son 1,8 MB de JSON
+entre las dos y se piden al encenderlas, así quien no las usa no las descarga. Con
+`dist/index.html` abierto desde el disco, el navegador prohíbe `fetch()` sobre `file://` y la
+capa queda no disponible; la interfaz lo explica. Desde el sitio publicado funcionan.
 
 ### Fondos cartográficos
 
@@ -106,10 +126,31 @@ multitrayecto de P.530 en forma simplificada. La banda recomendada es la de ante
 pequeña que cumple la disponibilidad objetivo y, a igualdad de antena, la frecuencia más
 alta, para no consumir las bandas bajas en saltos que se resuelven arriba.
 
-**Despeje.** Abultamiento terrestre con factor `k = 4/3`, más una fracción de la primera zona
-de Fresnel, más un margen por clutter. Sin cotas de terreno sólo se verifica si las alturas
-declaradas alcanzarían en terreno plano y el veredicto queda condicionado a perfil; con las
-tres cotas cargadas (extremo A, extremo B y obstáculo) el despeje se resuelve numéricamente.
+**Despeje.** Se resuelve sobre altimetría real: 100 muestras sobre el círculo máximo del
+vano, cotas del modelo digital SRTM de 30 m vía OpenTopoData, y despeje evaluado en cada punto
+contra abultamiento terrestre (`k = 4/3`) más una fracción de la primera zona de Fresnel más un
+margen por clutter. El punto crítico es el de menor holgura, no el medio del vano.
+
+La columna **Despeje** de las tablas declara siempre el origen del resultado:
+
+| Valor | Significa |
+| --- | --- |
+| `SRTM ok` / `SRTM marginal` / `SRTM corta` | resuelto sobre perfil medido |
+| `cotas ok` / … | resuelto con las cotas que cargó el usuario, que tienen precedencia |
+| `plano` | sin perfil ni cotas: sólo se tamizó en terreno plano |
+
+Un vano en `plano` puede cerrar el presupuesto de enlace y no ver el otro extremo.
+
+Se perfila el vano que se está mirando, no los ocho candidatos: el servicio admite una llamada
+por segundo. Si el nodo más conveniente no tiene línea de vista, se siguen perfilando los
+siguientes por distancia hasta hallar uno que sí, con tope. La reelección del mejor vano se
+hace sólo entre los perfilados, para no comparar terreno medido contra terreno plano supuesto.
+
+Dos límites: SRTM es radar, así que en zonas con vegetación su retorno cae en algún punto del
+dosel —incluye algo de los árboles, de forma poco confiable—, y para árboles y edificios
+medidos haría falta un modelo de superficie LiDAR, que no existe gratuito para todo Chile. El
+clutter sigue siendo un margen, sólo que ahora sobre terreno medido. El servicio se puede
+desactivar en Parámetros y `ELEVACION_URL` apunta a una instancia propia de OpenTopoData.
 
 ## Dos límites del dato de origen
 
@@ -119,8 +160,9 @@ Los dumps CGI no traen el medio de transmisión de cada sitio ni la altimetría 
   perfil radio (presencia de 5G, cantidad de celdas LTE, morfología, indoor/outdoor). Es una
   heurística declarada como tal. Pegando el inventario real de nodos con fibra en la pestaña
   Parámetros, ese dato la reemplaza por completo.
-- **Terreno**: la línea de vista no se puede cerrar sin altimetría. Se resuelve cargando las
-  cotas del vano en el modo Enlace A–B.
+- **Terreno**: los dumps no traen altimetría, pero ya no hace falta cargarla a mano. El
+  despeje se resuelve contra el modelo digital SRTM de 30 m; las cotas manuales siguen
+  disponibles y tienen precedencia cuando se cargan.
 
 ## Regenerar
 
@@ -128,7 +170,11 @@ Los dumps CGI no traen el medio de transmisión de cada sitio ni la altimetría 
 # 1. consolidar los sitios desde los workbooks CGI
 python3 tools/extract_sites.py CGI_20260713.xlsx CGI_HUAWEI_20260713.xlsx -o data/sites.json
 
-# 2. empaquetar la web en un solo archivo
+# 2. consolidar las capas de antenas SUBTEL
+python3 tools/extract_kmz.py antenas_servicio_chile.kmz    -o data/capa_servicio.json
+python3 tools/extract_kmz.py antenas_autorizadas_chile.kmz -o data/capa_autorizadas.json
+
+# 3. empaquetar la web y copiar las capas a dist/
 python3 tools/build_web.py
 ```
 
@@ -142,10 +188,12 @@ repetidas (1,9 MB → 531 KB) y lo incrusta en el HTML.
 
 ```
 data/sites.json      inventario consolidado de sitios
+data/capa_*.json     capas de antenas SUBTEL (servidas aparte, no incrustadas)
 web/app.js           motor de cálculo e interfaz
 web/app.css          hoja de estilos (tema claro y oscuro)
 web/body.html        estructura de la página
 tools/extract_sites.py   xlsx CGI  →  sites.json
+tools/extract_kmz.py     kmz SUBTEL →  capa_*.json
 tools/build_web.py       sites.json + web/  →  dist/
 dist/index.html      documento completo, listo para abrir
 dist/artifact.html    mismo contenido sin <html>/<head>/<body>

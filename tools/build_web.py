@@ -10,7 +10,7 @@ cadenas repetidas: baja el payload de ~1,9 MB a un tercio sin perder campos.
 
 Uso:  python3 tools/build_web.py
 """
-import argparse, json, os
+import argparse, json, os, shutil
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TECH_BITS = {'2G': 1, '3G': 2, 'LTE': 4, '5G': 8}
@@ -105,12 +105,38 @@ def construir(datos_json, salida_dir):
     with open(idx, 'w', encoding='utf-8') as fh:
         fh.write(completo)
 
+    capas = copiar_capas(salida_dir)
+
     return {
         'sitios': payload['n'],
         'datos_kb': round(len(datos.encode()) / 1024, 1),
         'artifact_kb': round(os.path.getsize(art) / 1024, 1),
         'index_kb': round(os.path.getsize(idx) / 1024, 1),
+        'capas_kb': capas,
     }
+
+
+# Las capas SUBTEL no se incrustan: son ~1,8 MB de JSON entre las dos y sólo
+# hacen falta si el usuario las enciende, así que viajan como archivos aparte
+# que la web pide bajo demanda.
+CAPAS_SUBTEL = {
+    'capas/servicio.json': 'capa_servicio.json',
+    'capas/autorizadas.json': 'capa_autorizadas.json',
+}
+
+
+def copiar_capas(salida_dir):
+    info = {}
+    for destino_rel, origen_nombre in CAPAS_SUBTEL.items():
+        origen = os.path.join(RAIZ, 'data', origen_nombre)
+        if not os.path.exists(origen):
+            info[destino_rel] = 'ausente'
+            continue
+        destino = os.path.join(salida_dir, destino_rel)
+        os.makedirs(os.path.dirname(destino), exist_ok=True)
+        shutil.copyfile(origen, destino)
+        info[destino_rel] = round(os.path.getsize(destino) / 1024, 1)
+    return info
 
 
 if __name__ == '__main__':

@@ -317,36 +317,86 @@ function evaluarBanda(banda, dKmBruto, P, inclinacionMrad) {
 }
 
 /**
- * Geometría del vano: despeje necesario en el punto crítico y, si el usuario
- * aportó cotas de terreno, si el despeje disponible alcanza.
+ * Geometría del vano y resolución del despeje. Tres calidades de respuesta, en
+ * orden de precedencia:
+ *   1. cotas que declaró el usuario — puede conocer un obstáculo que el modelo
+ *      digital no ve, como un edificio nuevo;
+ *   2. perfil altimétrico medido, evaluado punto por punto;
+ *   3. sin ninguno de los dos, terreno plano: un tamiz, no un perfil.
  */
-function geometria(dKmBruto, hA, hB, P, cotas) {
+function geometria(dKmBruto, hA, hB, P, cotas, perfil) {
   const dKm = Math.max(0.01, dKmBruto);
   const dObs = cotas && cotas.dObsKm > 0 && cotas.dObsKm < dKm ? cotas.dObsKm : dKm / 2;
-  const d1 = dObs, d2 = dKm - dObs;
   const f = P.fRef;
-  const F1 = fresnel1(d1, d2, f);
-  const bulge = abultamiento(d1, d2, P.kRefraccion);
-  const requerido = bulge + P.fraccionFresnel * F1 + P.clutter;
+  const requeridoEn = (d1, d2) =>
+    abultamiento(d1, d2, P.kRefraccion) + P.fraccionFresnel * fresnel1(d1, d2, f) + P.clutter;
 
-  const g = { dKm, dObsKm: dObs, F1, bulge, requerido, los: 'desconocido', disponible: null, holgura: null };
+  const F1 = fresnel1(dObs, dKm - dObs, f);
+  const bulge = abultamiento(dObs, dKm - dObs, P.kRefraccion);
+  const g = { dKm, dObsKm: dObs, F1, bulge, requerido: requeridoEn(dObs, dKm - dObs),
+              los: 'desconocido', disponible: null, holgura: null, fuente: 'plano' };
+
+  const dictamen = (disponible, requerido, bulgeLocal) => {
+    g.disponible = disponible;
+    g.holgura = disponible - requerido;
+    g.requerido = requerido;
+    g.los = g.holgura >= 0 ? 'ok'
+          : (disponible >= bulgeLocal + P.clutter ? 'marginal' : 'insuficiente');
+  };
 
   if (cotas && cotas.cotaA != null && cotas.cotaB != null && cotas.cotaObs != null) {
     const topeA = cotas.cotaA + hA;
     const topeB = cotas.cotaB + hB;
-    const rayo = topeA + ((topeB - topeA) * d1) / dKm;   // altura del rayo sobre el obstáculo
-    g.disponible = rayo - cotas.cotaObs;
-    g.holgura = g.disponible - requerido;
-    g.los = g.holgura >= 0 ? 'ok' : (g.disponible >= bulge + P.clutter ? 'marginal' : 'insuficiente');
+    const rayo = topeA + ((topeB - topeA) * dObs) / dKm;   // altura del rayo sobre el obstáculo
+    dictamen(rayo - cotas.cotaObs, g.requerido, bulge);
+    g.fuente = 'cotas';
     g.rayo = rayo;
     g.cotaA = cotas.cotaA;
     g.cotaB = cotas.cotaB;
     g.cotaObs = cotas.cotaObs;
-  } else {
-    /* Sin cotas: se asume terreno plano y se comprueba si la altura media de
-       las antenas cubre el despeje exigido. Es un tamiz, no un perfil. */
+  } else if (perfil && perfil.puntos && perfil.puntos.length >= 3) {
+    /* El punto crítico no es el medio del vano: se busca el de menor holgura
+       sobre todo el perfil, que es lo que decide la línea de vista. */
+    const pts = perfil.puntos;
+    const elevA = pts[0].elev, elevB = pts[pts.length - 1].elev;
+    const topeA = elevA + hA, topeB = elevB + hB;
+    /* Las muestras pegadas a las torres quedan dominadas por el clutter y
+       ganarían el mínimo siempre sin informar nada: lo que hay al pie de la
+       torre se resuelve en inspección, no sobre el perfil. */
+    const borde = Math.max(0.03, dKm * 0.02);
+    let peor = null;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d1 = pts[i].km, d2 = dKm - d1;
+      if (d1 <= borde || d2 <= borde) continue;
+      const req = requeridoEn(d1, d2);
+      const rayo = topeA + ((topeB - topeA) * d1) / dKm;
+      const disp = rayo - pts[i].elev;
+      const hol = disp - req;
+      if (!peor || hol < peor.holgura) {
+        peor = { km: d1, elev: pts[i].elev, requerido: req, disponible: disp, holgura: hol,
+                 bulge: abultamiento(d1, d2, P.kRefraccion), F1: fresnel1(d1, d2, f) };
+      }
+    }
+    if (peor) {
+      dictamen(peor.disponible, peor.requerido, peor.bulge);
+      g.fuente = 'perfil';
+      g.perfil = perfil;
+      g.peor = peor;
+      g.dObsKm = peor.km;
+      g.bulge = peor.bulge;
+      g.F1 = peor.F1;
+      g.cotaA = elevA;
+      g.cotaB = elevB;
+      g.cotaObs = peor.elev;
+      g.rayo = topeA + ((topeB - topeA) * peor.km) / dKm;
+    }
+  }
+
+  if (g.los === 'desconocido') {
+    /* Sin cotas ni perfil: se asume terreno plano y se comprueba si la altura
+       media de las antenas cubre el despeje exigido. */
     g.disponible = (hA + hB) / 2;
-    g.holgura = g.disponible - requerido;
+    g.holgura = g.disponible - g.requerido;
     g.losPlano = g.holgura >= 0;
   }
   return g;
@@ -366,12 +416,12 @@ function extremoComoNodo(ext, P) {
 }
 
 /** Análisis completo de un vano de microondas entre dos extremos. */
-function analizarMMOO(A, B, P, cotas) {
+function analizarMMOO(A, B, P, cotas, perfil) {
   const dKm = haversine(A.lat, A.lon, B.lat, B.lon);
   const hA = A.alt || P.alturaDefecto;
   const hB = B.alt || P.alturaDefecto;
   const inclinacion = dKm > 0 ? Math.abs(hA - hB) / dKm : 0;   // m/km ≡ mrad
-  const geo = geometria(dKm, hA, hB, P, cotas);
+  const geo = geometria(dKm, hA, hB, P, cotas, perfil);
 
   const habilitadas = Array.isArray(P.bandas) && P.bandas.length
     ? BANDAS.filter((b) => P.bandas.includes(b.id)) : BANDAS;
@@ -396,13 +446,20 @@ function analizarMMOO(A, B, P, cotas) {
       : `Ninguna banda cierra el vano de ${fmt(dKm, 1)} km con antenas de hasta ${P.antenaMax} m.`;
   } else if (geo.los === 'insuficiente') {
     grade = 'bad';
-    why = `Radioeléctricamente cierra en ${recomendada.banda.id}, pero el despeje sobre el obstáculo declarado es insuficiente (faltan ${fmt(-geo.holgura, 1)} m).`;
+    const donde = geo.fuente === 'perfil'
+      ? `el terreno en el km ${fmt(geo.dObsKm, 1)} (${fmt(geo.cotaObs, 0)} msnm) corta el rayo`
+      : 'el despeje sobre el obstáculo declarado es insuficiente';
+    why = `Radioeléctricamente cierra en ${recomendada.banda.id}, pero ${donde}: faltan ${fmt(-geo.holgura, 1)} m.`;
   } else if (geo.los === 'marginal') {
     grade = 'warn';
-    why = `Cierra en ${recomendada.banda.id}, con despeje marginal: obstruye la zona de Fresnel en ${fmt(-geo.holgura, 1)} m. Elevar torre o replantear.`;
+    const donde = geo.fuente === 'perfil' ? ` en el km ${fmt(geo.dObsKm, 1)}` : '';
+    why = `Cierra en ${recomendada.banda.id}, con despeje marginal: obstruye la zona de Fresnel en ${fmt(-geo.holgura, 1)} m${donde}. Elevar torre o replantear.`;
   } else if (geo.los === 'ok') {
     grade = 'ok';
-    why = `Vano de ${fmt(dKm, 1)} km en ${recomendada.banda.id}, antena de ${fmtAnt(recomendada.antena)}, despeje verificado con holgura de ${fmt(geo.holgura, 1)} m.`;
+    const como = geo.fuente === 'perfil'
+      ? `despeje resuelto sobre perfil SRTM con holgura de ${fmt(geo.holgura, 1)} m en el km ${fmt(geo.dObsKm, 1)}`
+      : `despeje verificado con holgura de ${fmt(geo.holgura, 1)} m`;
+    why = `Vano de ${fmt(dKm, 1)} km en ${recomendada.banda.id}, antena de ${fmtAnt(recomendada.antena)}, ${como}.`;
   } else if (!geo.losPlano) {
     grade = 'warn';
     why = `Cierra en ${recomendada.banda.id}, pero con las alturas declaradas (${fmt(hA, 0)} / ${fmt(hB, 0)} m) no se cubre el despeje de ${fmt(geo.requerido, 1)} m ni en terreno plano.`;
@@ -417,7 +474,105 @@ function analizarMMOO(A, B, P, cotas) {
   return { dKm, hA, hB, geo, bandas, recomendada, grade, why, inclinacion };
 }
 
-/* =========================== 3.b Ruteo por calles =========================== */
+/* =========================== 3.b Altimetría =========================== */
+
+/* Modelo digital de elevación. Instancia pública de OpenTopoData sobre SRTM de
+   30 m, gratuita y sin clave: 100 puntos por llamada, una llamada por segundo.
+   Para volumen alto, levantar OpenTopoData propio y apuntar aquí.
+   SRTM cubre de 60°S al norte, así que alcanza hasta Magallanes. */
+const ELEVACION_URL = 'https://api.opentopodata.org/v1/srtm30m';
+const ELEVACION_PUNTOS = 100;        // tope por llamada del servicio
+const ELEVACION_ESPERA = 1100;       // ms entre llamadas, por el límite de 1/s
+
+const Altimetria = (function () {
+  const cache = new Map();
+  let fallos = 0;
+  let apagado = false;
+  let ultima = 0;
+  let cola = Promise.resolve();       // serializa: el servicio admite 1 llamada/s
+
+  const clave = (a, b) =>
+    `${a.lat.toFixed(4)},${a.lon.toFixed(4)}>${b.lat.toFixed(4)},${b.lon.toFixed(4)}`;
+
+  /** Interpolación sobre el círculo máximo, para muestrear el vano. */
+  function interpolar(a, b, t) {
+    const la1 = rad(a.lat), lo1 = rad(a.lon), la2 = rad(b.lat), lo2 = rad(b.lon);
+    const d = 2 * Math.asin(Math.sqrt(
+      Math.sin((la2 - la1) / 2) ** 2 +
+      Math.cos(la1) * Math.cos(la2) * Math.sin((lo2 - lo1) / 2) ** 2));
+    if (d < 1e-9) return { lat: a.lat, lon: a.lon };
+    const A = Math.sin((1 - t) * d) / Math.sin(d);
+    const B = Math.sin(t * d) / Math.sin(d);
+    const x = A * Math.cos(la1) * Math.cos(lo1) + B * Math.cos(la2) * Math.cos(lo2);
+    const y = A * Math.cos(la1) * Math.sin(lo1) + B * Math.cos(la2) * Math.sin(lo2);
+    const z = A * Math.sin(la1) + B * Math.sin(la2);
+    return { lat: deg(Math.atan2(z, Math.hypot(x, y))), lon: deg(Math.atan2(y, x)) };
+  }
+
+  async function esperarTurno() {
+    const falta = ELEVACION_ESPERA - (performance.now() - ultima);
+    if (falta > 0) await new Promise((r) => setTimeout(r, falta));
+    ultima = performance.now();
+  }
+
+  /**
+   * Perfil altimétrico del vano: n muestras equiespaciadas entre los extremos.
+   * Devuelve null si no hay servicio, y quien llama debe seguir funcionando con
+   * lo que tenga.
+   */
+  async function perfil(a, b, n) {
+    if (apagado || !ESTADO.params.altimetria) return null;
+    const k = clave(a, b);
+    if (cache.has(k)) return cache.get(k);
+
+    const muestras = Math.max(3, Math.min(ELEVACION_PUNTOS, n || ELEVACION_PUNTOS));
+    const dKm = haversine(a.lat, a.lon, b.lat, b.lon);
+    const pts = [];
+    for (let i = 0; i < muestras; i++) {
+      const t = i / (muestras - 1);
+      const p = interpolar(a, b, t);
+      pts.push({ km: dKm * t, lat: p.lat, lon: p.lon });
+    }
+
+    const tarea = cola.then(async () => {
+      if (cache.has(k)) return cache.get(k);
+      try {
+        await esperarTurno();
+        const locs = pts.map((p) => `${p.lat.toFixed(6)},${p.lon.toFixed(6)}`).join('|');
+        const resp = await fetch(`${ELEVACION_URL}?locations=${encodeURIComponent(locs)}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const j = await resp.json();
+        if (j.status !== 'OK' || !Array.isArray(j.results)) throw new Error(j.status || 'sin datos');
+        const puntos = j.results.map((r, i) => ({
+          km: pts[i].km, lat: pts[i].lat, lon: pts[i].lon,
+          elev: Number.isFinite(r.elevation) ? r.elevation : 0,
+        }));
+        /* si el modelo no cubre la zona devuelve nulos, que llegan como 0 */
+        const utiles = j.results.filter((r) => Number.isFinite(r.elevation)).length;
+        if (utiles < muestras * 0.6) throw new Error('cobertura insuficiente');
+        const res = { puntos, dKm, fuente: 'SRTM 30 m', muestras };
+        cache.set(k, res);
+        fallos = 0;
+        return res;
+      } catch (e) {
+        if (++fallos >= 3) apagado = true;
+        cache.set(k, null);
+        return null;
+      }
+    });
+    cola = tarea.catch(() => {});
+    return tarea;
+  }
+
+  return {
+    perfil,
+    interpolar,
+    get activo() { return !apagado; },
+    reactivar() { apagado = false; fallos = 0; },
+  };
+})();
+
+/* =========================== 3.c Ruteo por calles =========================== */
 
 /* Servicio de ruteo. Es el servidor público de demostración de OSRM: gratuito y
    sin clave, con uso razonable esperado. Para volumen alto, apuntar esta
@@ -802,6 +957,107 @@ function regionDe(lat, lon) {
   return v.length ? v[0].sitio.region : 'RM';
 }
 
+/* =========================== 6.b Capas SUBTEL =========================== */
+
+/* Registros de antenas de SUBTEL. Son ~17.000 y ~12.600 emplazamientos, así que
+   no se incrustan: se piden al activar la capa y quien no las usa no las baja.
+   Con dist/index.html abierto desde el disco, fetch() sobre file:// está vetado
+   por el navegador y la capa queda no disponible; se avisa en la interfaz. */
+const CAPAS = [
+  { id: 'servicio', archivo: 'capas/servicio.json', nombre: 'Antenas en servicio',
+    forma: 'arriba', alfa: 0.9 },
+  { id: 'autorizadas', archivo: 'capas/autorizadas.json', nombre: 'Antenas autorizadas',
+    forma: 'abajo', alfa: 0.6 },
+];
+
+/* Un color por marca, compartido por las dos capas: lo que se quiere leer de un
+   vistazo es de quién es la antena, no en qué registro aparece. */
+const COLOR_MARCA = {
+  CLARO: '#e4574f', ENTEL: '#3f8ae0', MOVISTAR: '#4fb3a6', WOM: '#c964c0',
+  WILL: '#d99a3c', VTR: '#6cae4a', BORDER: '#8a8fa8', OTROS: '#8a8fa8',
+};
+
+const Capas = (function () {
+  const estado = new Map();     // id -> {cargando, datos, error}
+
+  function decodificar(j) {
+    const n = j.n;
+    const lat = new Float64Array(n), lon = new Float64Array(n);
+    let acLat = 0, acLon = 0;
+    for (let i = 0; i < n; i++) {
+      acLat += j.lat[i]; acLon += j.lon[i];
+      lat[i] = acLat / 1e5; lon[i] = acLon / 1e5;
+    }
+    return { titulo: j.titulo, n, lat, lon, dic: j.dic,
+             marca: j.marca, tec: j.tec, sop: j.sop, alt: j.alt,
+             com: j.com, ban: j.ban, nom: j.nom, sid: j.sid, el: j.el };
+  }
+
+  /** Índices dentro de una ventana. Los puntos vienen ordenados por latitud,
+      así que una búsqueda binaria acota el barrido sin estructura extra. */
+  function enVentana(d, laMin, laMax, loMin, loMax, tope) {
+    let lo = 0, hi = d.n;
+    while (lo < hi) { const m = (lo + hi) >> 1; d.lat[m] < laMin ? lo = m + 1 : hi = m; }
+    const out = [];
+    for (let i = lo; i < d.n && d.lat[i] <= laMax; i++) {
+      if (d.lon[i] >= loMin && d.lon[i] <= loMax) {
+        out.push(i);
+        if (tope && out.length >= tope) break;
+      }
+    }
+    return out;
+  }
+
+  async function activar(id) {
+    const cfg = CAPAS.find((c) => c.id === id);
+    if (!cfg) return null;
+    let e = estado.get(id);
+    if (e && (e.datos || e.cargando)) return e.datos || null;
+    e = { cargando: true, datos: null, error: null };
+    estado.set(id, e);
+    try {
+      const resp = await fetch(cfg.archivo);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      e.datos = decodificar(await resp.json());
+    } catch (err) {
+      e.error = err.message || 'no disponible';
+    } finally {
+      e.cargando = false;
+    }
+    return e.datos;
+  }
+
+  const datos = (id) => (estado.get(id) || {}).datos || null;
+  const info = (id) => estado.get(id) || {};
+
+  /** Ficha legible de un emplazamiento, para el rótulo al pasar el cursor. */
+  function ficha(d, i) {
+    const marcas = Object.keys(COLOR_MARCA)
+      .filter((_, k) => d.marca[i] & (1 << k)).slice(0, 4);
+    const tec = ['2G', '3G', '4G', '5G'].filter((_, k) => d.tec[i] & (1 << k));
+    return {
+      nombre: d.nom[i] || d.sid[i] || '—',
+      sid: d.sid[i],
+      marcas: marcas.length ? marcas : ['OTROS'],
+      tec,
+      soporte: d.sop[i] >= 0 ? d.dic.soportes[d.sop[i]] : '—',
+      altura: d.alt[i],
+      comuna: d.com[i] >= 0 ? d.dic.comunas[d.com[i]] : '',
+      bandas: (d.ban[i] || []).map((k) => d.dic.bandas[k]),
+      elementos: d.el[i],
+      lat: d.lat[i], lon: d.lon[i],
+    };
+  }
+
+  const marcaDe = (mask) => {
+    const claves = Object.keys(COLOR_MARCA);
+    for (let k = 0; k < claves.length; k++) if (mask & (1 << k)) return claves[k];
+    return 'OTROS';
+  };
+
+  return { activar, datos, info, enVentana, ficha, marcaDe };
+})();
+
 /* =========================== 7. Mapa =========================== */
 
 /**
@@ -857,6 +1113,7 @@ const Mapa = (function () {
   let hover = null;
   let listo = false;
   let fondo = fondoPorId('carto');
+  let capasVisibles = [];         // marcadores SUBTEL pintados, para el cursor
   const teselas = new Map();                 // "z/x/y" -> {img, estado}
   let usadas = new Set();
   let fallos = 0, aciertos = 0;
@@ -1008,6 +1265,52 @@ const Mapa = (function () {
     escala = Math.min(escala, W / minRad);
   }
 
+  /** Marcadores de las capas SUBTEL activas, por debajo de la red propia. */
+  function pintarCapasSubtel() {
+    const laMin = latDe(H), laMax = latDe(0), loMin = lonDe(0), loMax = lonDe(W);
+    capasVisibles = [];
+    CAPAS.forEach((cfg) => {
+      if (!ESTADO.capas[cfg.id]) return;
+      const d = Capas.datos(cfg.id);
+      if (!d) return;
+      const idx = Capas.enVentana(d, laMin, laMax, loMin, loMax, 12000);
+      const filtro = ESTADO.marcas;
+      /* con mucha densidad el triángulo no aporta y cuesta: se cae a punto */
+      const denso = idx.length > 2500;
+      const r = denso ? 1.1 : (escala > 400000 ? 4 : 3);
+      ctx.globalAlpha = cfg.alfa;
+      for (const i of idx) {
+        const marca = Capas.marcaDe(d.marca[i]);
+        if (filtro && filtro.size && !filtro.has(marca)) continue;
+        const x = px(d.lon[i]), y = py(d.lat[i]);
+        ctx.fillStyle = COLOR_MARCA[marca] || COLOR_MARCA.OTROS;
+        if (denso) {
+          ctx.fillRect(x - r, y - r, r * 2, r * 2);
+        } else {
+          const s = cfg.forma === 'abajo' ? -1 : 1;
+          ctx.beginPath();
+          ctx.moveTo(x, y - r * s);
+          ctx.lineTo(x - r, y + r * 0.75 * s);
+          ctx.lineTo(x + r, y + r * 0.75 * s);
+          ctx.closePath();
+          ctx.fill();
+        }
+        capasVisibles.push({ capa: cfg, d, i, x, y });
+      }
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  /** Marcador SUBTEL bajo el cursor, si hay alguno a tiro. */
+  function antenaEn(mx, my) {
+    let mejor = null, mejorD = 81;        // 9 px de radio
+    for (const m of capasVisibles) {
+      const dd = (m.x - mx) ** 2 + (m.y - my) ** 2;
+      if (dd < mejorD) { mejorD = dd; mejor = m; }
+    }
+    return mejor;
+  }
+
   function grilla(t, conFondo) {
     /* de menor a mayor: el primer paso cuya separación supera los 58 px es el
        más fino que aún se lee (al revés siempre ganaría el paso de 10°) */
@@ -1096,6 +1399,8 @@ const Mapa = (function () {
     const conFondo = pintarFondo(t);
     grilla(t, conFondo);
     avisarCredito(conFondo);
+
+    pintarCapasSubtel();
 
     /* sitios de red: intensidad por tecnología más alta presente */
     const r = escala > 900000 ? 2.6 : escala > 250000 ? 1.9 : 1.35;
@@ -1212,8 +1517,20 @@ const Mapa = (function () {
       if (s !== hover) { hover = s; pintar(); }
       const out = document.getElementById('map-readout');
       if (out) {
-        out.textContent = `${latDe(my).toFixed(5)}°  ${lonDe(mx).toFixed(5)}°` +
-          (s ? `\n${s.id} · ${s.nombre}` : '');
+        let extra = s ? `\n${s.id} · ${s.nombre}` : '';
+        if (!s) {
+          const a = antenaEn(mx, my);
+          if (a) {
+            const f = Capas.ficha(a.d, a.i);
+            extra = `\n${f.marcas.join('/')} · ${f.nombre}` +
+              `\n${f.soporte}${f.altura ? ` ${f.altura} m` : ''}` +
+              `${f.tec.length ? ` · ${f.tec.join(' ')}` : ''}` +
+              `${f.comuna ? `\n${f.comuna}` : ''}` +
+              `${f.bandas.length ? `\n${f.bandas.join('/')} MHz` : ''}` +
+              `\n${a.capa.nombre}`;
+          }
+        }
+        out.textContent = `${latDe(my).toFixed(5)}°  ${lonDe(mx).toFixed(5)}°` + extra;
         out.style.visibility = 'visible';
       }
     });
@@ -1258,6 +1575,13 @@ const Mapa = (function () {
   return {
     init,
     pintar,
+    async alternarCapa(id, encendida) {
+      ESTADO.capas[id] = encendida;
+      if (encendida) await Capas.activar(id);
+      pintar();
+      return Capas.info(id);
+    },
+    fijarMarcas(set) { ESTADO.marcas = set; pintar(); },
     fijarFondo(id) {
       const nuevo = fondoPorId(id);
       if (nuevo === fondo) return;
@@ -1319,6 +1643,7 @@ const PARAMS_DEFECTO = {
   bandas: BANDAS.map((b) => b.id),
   fondo: 'carto',
   ruteo: true,
+  altimetria: true,
 };
 
 const ESTADO = {
@@ -1328,6 +1653,8 @@ const ESTADO = {
   nodosFO: new Set(),
   orden: { col: 'km', asc: true },
   seleccion: 0,
+  capas: { servicio: false, autorizadas: false },
+  marcas: new Set(),                 // vacío = todas las marcas
 };
 
 const LS = 'factibilidad.v1';
@@ -1335,6 +1662,7 @@ function guardar() {
   try {
     localStorage.setItem(LS, JSON.stringify({
       params: ESTADO.params, nodosFO: Array.from(ESTADO.nodosFO),
+      capas: ESTADO.capas, marcas: Array.from(ESTADO.marcas),
     }));
   } catch (e) { /* almacenamiento no disponible */ }
 }
@@ -1345,6 +1673,8 @@ function restaurar() {
     const d = JSON.parse(raw);
     if (d.params) Object.assign(ESTADO.params, d.params);
     if (d.nodosFO) ESTADO.nodosFO = new Set(d.nodosFO);
+    if (d.capas) Object.assign(ESTADO.capas, d.capas);
+    if (d.marcas) ESTADO.marcas = new Set(d.marcas);
   } catch (e) { /* estado corrupto: se ignora */ }
 }
 
@@ -1451,6 +1781,75 @@ function ejecutar() {
   ESTADO.seleccion = 0;
   render();
   medirTendidos();
+  medirPerfiles();
+}
+
+/* ---- controles de las capas SUBTEL ---- */
+
+function montarControlesCapas() {
+  const cont = $('#capas-toggles');
+  cont.innerHTML = CAPAS.map((c) => `
+    <label data-capa="${c.id}" data-activa="${ESTADO.capas[c.id] ? 1 : 0}">
+      <input type="checkbox" ${ESTADO.capas[c.id] ? 'checked' : ''}>
+      <span class="glifo">${c.forma === 'abajo' ? '▽' : '▲'}</span>${c.nombre}
+    </label>`).join('');
+
+  cont.querySelectorAll('label').forEach((lab) => {
+    const id = lab.dataset.capa;
+    lab.querySelector('input').addEventListener('change', async (e) => {
+      const on = e.target.checked;
+      lab.dataset.activa = on ? 1 : 0;
+      if (on) avisarCapas('cargando');
+      const info = await Mapa.alternarCapa(id, on);
+      guardar();
+      if (on && info && info.error) {
+        e.target.checked = false;
+        lab.dataset.activa = 0;
+        ESTADO.capas[id] = false;
+        Mapa.pintar();
+        avisarCapas('error', info.error);
+      } else {
+        avisarCapas('listo');
+      }
+    });
+  });
+
+  const marcas = $('#capas-marcas');
+  marcas.innerHTML = Object.keys(COLOR_MARCA)
+    .filter((m) => m !== 'BORDER')
+    .map((m) => `
+      <label data-marca="${m}" data-activa="${ESTADO.marcas.has(m) ? 1 : 0}">
+        <input type="checkbox" ${ESTADO.marcas.has(m) ? 'checked' : ''}>
+        <span class="pip" style="background:${COLOR_MARCA[m]}"></span>${m}
+      </label>`).join('');
+  marcas.querySelectorAll('label').forEach((lab) => {
+    lab.querySelector('input').addEventListener('change', (e) => {
+      const m = lab.dataset.marca;
+      e.target.checked ? ESTADO.marcas.add(m) : ESTADO.marcas.delete(m);
+      lab.dataset.activa = e.target.checked ? 1 : 0;
+      Mapa.fijarMarcas(ESTADO.marcas);
+      avisarCapas('listo');
+      guardar();
+    });
+  });
+}
+
+function avisarCapas(estado, detalle) {
+  const el = $('#capas-estado');
+  if (!el) return;
+  if (estado === 'cargando') { el.textContent = 'cargando capa…'; return; }
+  if (estado === 'error') {
+    el.textContent = `capa no disponible (${detalle}). Se sirven desde el sitio publicado; ` +
+      'abriendo el archivo desde el disco el navegador no permite leerlas.';
+    return;
+  }
+  const partes = CAPAS.filter((c) => ESTADO.capas[c.id]).map((c) => {
+    const d = Capas.datos(c.id);
+    return d ? `${d.n.toLocaleString('es-CL')} ${c.nombre.toLowerCase()}` : null;
+  }).filter(Boolean);
+  el.textContent = partes.length
+    ? `${partes.join(' · ')}${ESTADO.marcas.size ? ` · filtrado a ${ESTADO.marcas.size} marca(s)` : ''}`
+    : 'sin marcas = todas';
 }
 
 /* ---- medición del tendido por la red viaria ---- */
@@ -1515,6 +1914,107 @@ async function medirTendidos() {
     render();
   }
   avisarRuteo(medidas, pendientes.length);
+}
+
+/* ---- resolución del despeje con altimetría ---- */
+
+let testigoPerfiles = 0;
+
+/**
+ * Pide el perfil del vano principal del resultado en pantalla y recalcula su
+ * despeje. Sólo el vano mostrado: el servicio admite una llamada por segundo,
+ * así que perfilar los ocho nodos de una vez tardaría ocho segundos sin que
+ * nadie lo esté mirando. Los demás se perfilan al pinchar su fila.
+ */
+async function medirPerfiles() {
+  if (!ESTADO.params.altimetria || !Altimetria.activo) return;
+  const mio = ++testigoPerfiles;
+  const res = ESTADO.resultados[Math.min(ESTADO.seleccion, ESTADO.resultados.length - 1)];
+  if (!res) return;
+
+  const vano = res.tipo === 'sitio'
+    ? (res.mejorMW ? { A: res.cand, B: res.mejorMW.sitio, fila: res.mejorMW } : null)
+    : { A: res.A, B: res.B, fila: null };
+  if (!vano) return;
+
+  avisarPerfil('midiendo');
+  const p = await Altimetria.perfil(vano.A, vano.B);
+  if (mio !== testigoPerfiles) return;
+  if (!p) { avisarPerfil('sin servicio'); return; }
+
+  aplicarPerfil(res, vano, p);
+  render();
+  avisarPerfil('listo', p);
+
+  /* Si el nodo más conveniente no tiene línea de vista, la pregunta pasa a ser
+     cuál sí la tiene: se siguen perfilando los siguientes por distancia, con
+     tope, para no encadenar llamadas indefinidamente. */
+  if (res.tipo === 'sitio' && res.mejorMW.mw.geo.los !== 'ok') {
+    const cola = res.filas
+      .filter((f) => !f.perfil && f.mw.recomendada)
+      .sort((a, b) => a.km - b.km)
+      .slice(0, 4);
+    for (const fila of cola) {
+      if (mio !== testigoPerfiles) return;
+      avisarPerfil('buscando');
+      const q = await Altimetria.perfil(res.cand, fila.sitio);
+      if (mio !== testigoPerfiles) return;
+      if (!q) break;
+      aplicarPerfil(res, { A: res.cand, B: fila.sitio, fila }, q);
+      render();
+      if (res.mejorMW.mw.geo.los === 'ok') break;
+    }
+    avisarPerfil('listo', p);
+  }
+}
+
+/** Recalcula el análisis de radio de un vano con su perfil ya medido. */
+function aplicarPerfil(res, vano, p) {
+  const P = res.P;
+  if (res.tipo === 'sitio') {
+    vano.fila.mw = analizarMMOO(
+      { lat: res.cand.lat, lon: res.cand.lon, alt: res.cand.alt || P.alturaCandidato },
+      vano.B, P, null, p);
+    vano.fila.perfil = p;
+    /* Reelegir comparando un vano con despeje resuelto contra otros que siguen
+       en terreno plano sería comparar peras con manzanas, y además ocultaría el
+       hallazgo: la elección se hace sólo entre los que ya tienen perfil. */
+    const perfilados = res.filas.filter((f) => f.perfil);
+    res.mejorMW = perfilados.reduce((a, b) => {
+      const da = PESO_GRADO[a.mw.grade], db = PESO_GRADO[b.mw.grade];
+      if (db !== da) return db < da ? b : a;
+      return b.km < a.km ? b : a;
+    });
+  } else {
+    res.mw = analizarMMOO(res.A, res.B, P, res.cotas || null, p);
+    res.perfil = p;
+  }
+}
+
+/** Perfil de un vano concreto, a pedido al pinchar su fila en la tabla. */
+async function perfilarFila(res, fila) {
+  if (!ESTADO.params.altimetria || !Altimetria.activo || fila.perfil) return;
+  const mio = ++testigoPerfiles;
+  avisarPerfil('midiendo');
+  const p = await Altimetria.perfil(res.cand, fila.sitio);
+  if (mio !== testigoPerfiles || !p) { avisarPerfil(p ? 'listo' : 'sin servicio'); return; }
+  fila.mw = analizarMMOO(
+    { lat: res.cand.lat, lon: res.cand.lon, alt: res.cand.alt || res.P.alturaCandidato },
+    fila.sitio, res.P, null, p);
+  fila.perfil = p;
+  render();
+  avisarPerfil('listo', p);
+}
+
+function avisarPerfil(estado, p) {
+  const el = $('#estado-perfil');
+  if (!el) return;
+  el.textContent = {
+    midiendo: 'midiendo perfil de terreno…',
+    buscando: 'buscando un nodo con línea de vista…',
+    'sin servicio': 'despeje sin perfil: no hubo respuesta del servicio de altimetría',
+    listo: p ? `despeje resuelto sobre ${p.fuente}, ${p.muestras} muestras` : '',
+  }[estado] || '';
 }
 
 function avisarRuteo(medidas, total) {
@@ -1616,6 +2116,7 @@ function renderSitio(res) {
         <div class="spacer"></div>
         <span class="hint">${filas.length} más cercanos · clic para ver el vano</span>
         <span class="hint" id="estado-ruteo"></span>
+        <span class="hint" id="estado-perfil"></span>
         <button class="ghost" id="csv-nodos">Exportar CSV</button>
       </div>
       <div class="tablewrap">
@@ -1625,7 +2126,7 @@ function renderSitio(res) {
             <th>Código</th><th>Nombre</th><th>Comuna</th>
             <th class="num">Az.</th><th class="num">Alt.</th><th>Tec.</th>
             ${th('fo', 'FO', '')}${th('foKm', 'FO km', 'num')}<th class="num">USD</th>
-            ${th('mw', 'MMOO', '')}<th>Banda</th><th class="num">Ant.</th>
+            ${th('mw', 'MMOO', '')}<th>Despeje</th><th>Banda</th><th class="num">Ant.</th>
             ${th('disp', 'Disp.', 'num')}<th class="num">Margen</th>
           </tr></thead>
           <tbody>${filas.map((r, i) => filaNodo(r, cand, i)).join('')}</tbody>
@@ -1667,6 +2168,24 @@ function ordenarFilas(filas) {
   return filas.slice().sort((a, b) => (asc ? val(a) - val(b) : val(b) - val(a)));
 }
 
+/* El origen del despeje se declara en la tabla: comparar un vano resuelto sobre
+   perfil con otro que sigue en terreno plano sin decirlo sería engañoso. */
+const despejeTxt = (m) => {
+  const g = m.geo;
+  if (g.fuente === 'perfil') return `SRTM ${g.los}`;
+  if (g.fuente === 'cotas') return `cotas ${g.los}`;
+  return g.losPlano ? 'plano alcanza' : 'plano no alcanza';
+};
+
+function celdaDespeje(m) {
+  const g = m.geo;
+  const punto = { ok: 'ok', marginal: 'warn', insuficiente: 'bad' }[g.los] || 'none';
+  const txt = g.fuente === 'cotas' ? { ok: 'cotas ok', marginal: 'cotas marginal', insuficiente: 'cotas corta' }[g.los]
+            : g.fuente === 'perfil' ? { ok: 'SRTM ok', marginal: 'SRTM marginal', insuficiente: 'SRTM corta' }[g.los]
+            : 'plano';
+  return `<td><span class="dot ${punto}"></span>${txt}</td>`;
+}
+
 function filaNodo(r, cand, i) {
   const s = r.sitio, m = r.mw, f = r.fo;
   const az = azimut(cand.lat, cand.lon, s.lat, s.lon);
@@ -1684,6 +2203,7 @@ function filaNodo(r, cand, i) {
     <td class="num">${fmt(f.rutaKm, 2)}${f.medida ? '' : '*'}</td>
     <td class="num">${fmtMiles(f.costo)}</td>
     <td><span class="dot ${m.grade}"></span>${ETIQUETA[m.grade]}</td>
+    ${celdaDespeje(m)}
     <td>${m.recomendada ? m.recomendada.banda.id : '—'}</td>
     <td class="num">${m.recomendada ? fmtAnt(m.recomendada.antena) : '—'}</td>
     <td class="num">${m.recomendada ? fmtDisp(m.recomendada.disponibilidad) : '—'}</td>
@@ -1709,6 +2229,7 @@ function filaAlternativa(r) {
     <td class="num">${fmt(f.rutaKm, 2)}${f.medida ? '' : '*'}</td>
     <td class="num">${fmtMiles(f.costo)}</td>
     <td><span class="dot ${m.grade}"></span>${ETIQUETA[m.grade]}</td>
+    ${celdaDespeje(m)}
     <td>${m.recomendada ? m.recomendada.banda.id : '—'}</td>
     <td class="num">${m.recomendada ? fmtAnt(m.recomendada.antena) : '—'}</td>
     <td class="num">${m.recomendada ? fmtDisp(m.recomendada.disponibilidad) : '—'}</td>
@@ -1718,14 +2239,14 @@ function filaAlternativa(r) {
 function exportarAlternativas(res, alts) {
   const cab = ['extremo', 'desde', 'nodo', 'nombre_nodo', 'comuna', 'region', 'dist_km', 'azimut',
     'alt_ant_nodo', 'tecnologias', 'fo_prob', 'fo_tendido_km', 'fo_ruta', 'fo_costo_usd',
-    'fo_veredicto', 'mw_veredicto', 'mw_banda', 'mw_antena_m', 'mw_disponibilidad_pct'];
+    'fo_veredicto', 'mw_veredicto', 'mw_despeje', 'mw_banda', 'mw_antena_m', 'mw_disponibilidad_pct'];
   const filas = alts.map((r) => {
     const s = r.sitio, m = r.mw, f = r.fo, rec = m.recomendada;
     return [r.extremo, r.desde.nombre || r.desde.id, s.id, s.nombre, s.comuna, s.region,
       dec(r.km, 3), dec(azimut(r.desde.lat, r.desde.lon, s.lat, s.lon), 1), dec(s.alt, 0),
       techList(s.techMask).join('+'), f.fo.nivel, dec(f.rutaKm, 3),
       f.medida ? 'calles' : 'estimada', Math.round(f.costo), ETIQUETA[f.grade],
-      ETIQUETA[m.grade], rec ? rec.banda.id : '', rec ? dec(rec.antena, 1) : '',
+      ETIQUETA[m.grade], despejeTxt(m), rec ? rec.banda.id : '', rec ? dec(rec.antena, 1) : '',
       rec ? dec(rec.disponibilidad, 4) : ''];
   });
   bajar(`alternativas_${slug(res.nombre || res.A.nombre)}.csv`, csv([cab, ...filas]));
@@ -1748,6 +2269,7 @@ function enlazarTabla(res) {
       tr.classList.add('picked');
       $('#vano-slot').innerHTML = cuerpoVano(res.cand, fila.sitio, fila.mw, res.P);
       dibujarPerfil(fila.mw, res.cand, fila.sitio);
+      perfilarFila(res, fila);
       Mapa.fijar({
         candidatos: [{ lat: res.cand.lat, lon: res.cand.lon, nombre: res.cand.nombre, grade: fila.mw.grade }],
         nodos: [fila.sitio],
@@ -1774,7 +2296,7 @@ function panelVano(A, B, mw, P) {
 function cuerpoVano(A, B, mw, P) {
   const g = mw.geo;
   const losTxt = {
-    ok: '<span class="dot ok"></span>Despeje verificado con cotas',
+    ok: `<span class="dot ok"></span>Despeje verificado ${g.fuente === 'perfil' ? 'sobre perfil SRTM' : 'con cotas'}`,
     marginal: '<span class="dot warn"></span>Despeje marginal',
     insuficiente: '<span class="dot bad"></span>Despeje insuficiente',
     desconocido: `<span class="dot none"></span>Sin cotas: ${g.losPlano ? 'alcanza en terreno plano' : 'no alcanza ni en terreno plano'}`,
@@ -1791,6 +2313,9 @@ function cuerpoVano(A, B, mw, P) {
         ${esc(A.nombre || A.id)} → ${esc(B.nombre || B.id)} · ${fmt(mw.dKm, 2)} km ·
         azimut ${fmt(azimut(A.lat, A.lon, B.lat, B.lon), 1)}° / ${fmt(azimut(B.lat, B.lon, A.lat, A.lon), 1)}°
       </div>
+      ${g.fuente === 'perfil'
+        ? `<span class="hint">perfil ${esc(g.perfil.fuente)} · ${g.perfil.muestras} muestras</span>`
+        : ''}
       ${g.los === 'desconocido'
         ? `<button class="ghost" data-abrir-enlace='${esc(salto)}'>Cargar cotas de este vano</button>`
         : ''}
@@ -1865,16 +2390,31 @@ function dibujarPerfil(mw, A, B) {
      —así el obstáculo queda donde corresponde—; sin ellas, en metros sobre el
      suelo local asumiendo terreno plano. */
   const conCotas = g.cotaA != null && g.cotaB != null && g.cotaObs != null;
+  const perfil = g.fuente === 'perfil' ? g.perfil : null;
   const sueloA = conCotas ? g.cotaA : 0;
   const sueloB = conCotas ? g.cotaB : 0;
-  const suelo = (km) => sueloA + ((sueloB - sueloA) * km) / d +
-                        abultamiento(km, d - km, k);
+  /* Con perfil medido el terreno viene del modelo digital, interpolando entre
+     muestras; sin él se dibuja la recta entre cotas más el abultamiento. */
+  const terreno = (km) => {
+    if (!perfil) return sueloA + ((sueloB - sueloA) * km) / d;
+    const pts = perfil.puntos;
+    const t = Math.max(0, Math.min(1, km / d)) * (pts.length - 1);
+    const i = Math.min(pts.length - 2, Math.floor(t));
+    return pts[i].elev + (pts[i + 1].elev - pts[i].elev) * (t - i);
+  };
+  const suelo = (km) => terreno(km) + abultamiento(km, d - km, k);
   const topeA = sueloA + mw.hA;
   const topeB = sueloB + mw.hB;
   const rayoM = (km) => topeA + ((topeB - topeA) * km) / d;
 
   let vMin, vMax;
-  if (conCotas) {
+  if (perfil) {
+    const elevs = perfil.puntos.map((q) => q.elev);
+    const bulgeMax = abultamiento(d / 2, d / 2, k);
+    vMin = Math.min(...elevs, topeA, topeB);
+    vMax = Math.max(...elevs.map((e, i) => e + abultamiento((d * i) / (elevs.length - 1),
+                    d - (d * i) / (elevs.length - 1), k)), topeA, topeB, vMin + bulgeMax);
+  } else if (conCotas) {
     vMin = Math.min(sueloA, sueloB, g.cotaObs);
     vMax = Math.max(topeA, topeB, g.cotaObs);
   } else {
@@ -1882,7 +2422,7 @@ function dibujarPerfil(mw, A, B) {
     vMax = Math.max(mw.hA, mw.hB, g.requerido + 4, g.bulge + g.F1 + 4);
   }
   const aire = Math.max(6, (vMax - vMin) * 0.16);
-  vMin -= conCotas ? aire : 0;
+  vMin -= (conCotas || perfil) ? aire : 0;
   vMax += aire;
   const y = (m) => mt + ph - ((m - vMin) / (vMax - vMin)) * ph;
   const escalaV = ph / (vMax - vMin);        // px por metro
@@ -1897,8 +2437,30 @@ function dibujarPerfil(mw, A, B) {
   ctx.lineTo(x(d), mt + ph); ctx.lineTo(x(0), mt + ph); ctx.closePath();
   ctx.fillStyle = c('--panel-2'); ctx.globalAlpha = 0.8; ctx.fill(); ctx.globalAlpha = 1;
 
+  /* punto crítico del perfil: el de menor holgura, que es el que decide */
+  if (perfil && g.peor) {
+    const xp = x(g.peor.km), yp = y(suelo(g.peor.km));
+    ctx.strokeStyle = c(g.holgura >= 0 ? '--warn' : '--bad');
+    ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(xp, mt); ctx.lineTo(xp, mt + ph); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = c(g.holgura >= 0 ? '--warn' : '--bad');
+    ctx.beginPath(); ctx.arc(xp, yp, 3, 0, 6.2832); ctx.fill();
+    ctx.font = '600 9.5px ui-monospace, monospace';
+    /* el punto crítico puede caer pegado a un extremo: el rótulo se ancla al
+       lado que tenga espacio y se dibuja junto al punto, no en la cabecera */
+    const rot = `${fmt(g.peor.elev, 0)} m · km ${fmt(g.peor.km, 1)}`;
+    const alRas = xp > W - mr - ctx.measureText(rot).width - 8;
+    ctx.textAlign = alRas ? 'right' : 'left';
+    ctx.strokeStyle = c('--sunken');
+    ctx.lineWidth = 2.5;
+    ctx.strokeText(rot, xp + (alRas ? -6 : 6), yp - 7);
+    ctx.fillText(rot, xp + (alRas ? -6 : 6), yp - 7);
+    ctx.textAlign = 'left';
+  }
+
   /* obstáculo declarado, antes del rayo para que éste quede visible encima */
-  if (conCotas) {
+  if (conCotas && !perfil) {
     ctx.fillStyle = c('--bad'); ctx.globalAlpha = 0.55;
     const yObs = y(g.cotaObs);
     ctx.fillRect(x(g.dObsKm) - 3, yObs, 6, Math.max(2, mt + ph - yObs));
@@ -1999,7 +2561,7 @@ function renderEnlace(res) {
           <th>Extremo</th><th class="num">km</th><th>Código</th><th>Nombre</th><th>Comuna</th>
           <th class="num">Az.</th><th class="num">Alt.</th><th>Tec.</th>
           <th>FO</th><th class="num">FO km</th><th class="num">USD</th>
-          <th>MMOO</th><th>Banda</th><th class="num">Ant.</th><th class="num">Disp.</th>
+          <th>MMOO</th><th>Despeje</th><th>Banda</th><th class="num">Ant.</th><th class="num">Disp.</th>
         </tr></thead>
         <tbody>${alts.slice().sort((a, b) => (a.extremo === b.extremo ? a.km - b.km
           : a.extremo.localeCompare(b.extremo))).map(filaAlternativa).join('')}</tbody>
@@ -2108,7 +2670,7 @@ function bajar(nombre, texto) {
 function exportarNodos(res) {
   const cab = ['candidato', 'lat_cand', 'lon_cand', 'nodo', 'nombre_nodo', 'comuna', 'region',
     'dist_km', 'azimut', 'alt_ant_nodo', 'tecnologias', 'fo_prob', 'fo_tendido_km', 'fo_ruta', 'fo_costo_usd',
-    'fo_veredicto', 'mw_veredicto', 'mw_banda', 'mw_antena_m', 'mw_modulacion', 'mw_margen_db',
+    'fo_veredicto', 'mw_veredicto', 'mw_despeje', 'mw_banda', 'mw_antena_m', 'mw_modulacion', 'mw_margen_db',
     'mw_disponibilidad_pct', 'mw_min_ano', 'despeje_req_m', 'despeje_disp_m'];
   const filas = res.filas.map((r) => {
     const m = r.mw, f = r.fo, s = r.sitio, rec = m.recomendada;
@@ -2116,7 +2678,7 @@ function exportarNodos(res) {
       dec(r.km, 3), dec(azimut(res.cand.lat, res.cand.lon, s.lat, s.lon), 1), dec(s.alt, 0),
       techList(s.techMask).join('+'), f.fo.nivel, dec(f.rutaKm, 3),
       f.medida ? 'calles' : 'estimada', Math.round(f.costo),
-      ETIQUETA[f.grade], ETIQUETA[m.grade], rec ? rec.banda.id : '', rec ? dec(rec.antena, 1) : '',
+      ETIQUETA[f.grade], ETIQUETA[m.grade], despejeTxt(m), rec ? rec.banda.id : '', rec ? dec(rec.antena, 1) : '',
       rec ? rec.mod.nombre : '', rec ? dec(rec.margen, 1) : '',
       rec ? dec(rec.disponibilidad, 4) : '', rec ? Math.round(rec.minutosAnio) : '',
       dec(m.geo.requerido, 2), dec(m.geo.disponible, 2)];
@@ -2126,7 +2688,7 @@ function exportarNodos(res) {
 
 function exportarLote(res) {
   const cab = ['n', 'entrada', 'tipo', 'lat', 'lon', 'lat_b', 'lon_b', 'medio_recomendado', 'veredicto',
-    'nodo', 'dist_km', 'mw_veredicto', 'mw_banda', 'mw_antena_m', 'mw_disponibilidad_pct',
+    'nodo', 'dist_km', 'mw_veredicto', 'mw_despeje', 'mw_banda', 'mw_antena_m', 'mw_disponibilidad_pct',
     'fo_veredicto', 'fo_tendido_km', 'fo_costo_usd', 'observacion'];
   const filas = res.map((r, i) => {
     if (r.tipo === 'enlace') {
@@ -2142,7 +2704,7 @@ function exportarLote(res) {
     return [i + 1, r.cand.nombre, 'sitio', dec(r.cand.lat, 6), dec(r.cand.lon, 6), '', '', rec2.medio, ETIQUETA[rec2.grade],
       rec2.medio === 'Fibra óptica' ? f.nodo.id : r.mejorMW.sitio.id,
       dec(rec2.medio === 'Fibra óptica' ? r.mejorFO.km : m.dKm, 3),
-      ETIQUETA[m.grade], recB ? recB.banda.id : '', recB ? dec(recB.antena, 1) : '',
+      ETIQUETA[m.grade], despejeTxt(m), recB ? recB.banda.id : '', recB ? dec(recB.antena, 1) : '',
       recB ? dec(recB.disponibilidad, 4) : '', ETIQUETA[f.grade], dec(f.rutaKm, 3),
       Math.round(f.costo), rec2.texto];
   });
@@ -2230,6 +2792,7 @@ const CAMPOS_PARAM = [
   ['Geometría y propagación', [
     ['kRefraccion', 'Factor k de refracción', 'number', { min: 0.5, max: 2, step: 0.01 }],
     ['fraccionFresnel', 'Fracción de F1 exigida', 'number', { min: 0.1, max: 1.2, step: 0.1 }],
+    ['altimetria', 'Resolver despeje con perfil SRTM', 'check', {}],
     ['clutter', 'Margen por clutter/vegetación (m)', 'number', { min: 0, max: 30, step: 1 }],
     ['fRef', 'Frecuencia de referencia para F1 (GHz)', 'number', { min: 5, max: 90, step: 1 }],
     ['dN1', 'Gradiente de refractividad dN1', 'number', { min: -600, max: -50, step: 10 }],
@@ -2483,6 +3046,8 @@ function arrancar() {
   $('#filtro-region').innerHTML = '<option value="">Todas las regiones</option>' +
     Object.entries(META.por_region).map(([k, n]) =>
       `<option value="${k}">${k} · ${(REGIONES[k] ? REGIONES[k].nombre : k)} (${n})</option>`).join('');
+
+  montarControlesCapas();
 
   $('#fondo').innerHTML = FONDOS.map((f) =>
     `<option value="${f.id}" ${f.id === ESTADO.params.fondo ? 'selected' : ''}>${f.nombre}</option>`).join('');
