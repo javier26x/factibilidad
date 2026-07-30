@@ -652,6 +652,21 @@ td.strong { font-weight: 600; }
   pointer-events: none;
   white-space: pre;
 }
+/* etiqueta de procedencia en el listado de cercanos */
+.etq {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.etq-propia { color: var(--mw); }
+.etq-servicio { color: var(--ok); }
+.etq-autorizadas { color: var(--ink-3); }
+
 /* controles de las capas SUBTEL, sobre el mapa */
 .capas-bar {
   display: flex;

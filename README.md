@@ -38,8 +38,32 @@ python3 tools/build_web.py && firebase deploy --only hosting
 
 ## Uso
 
-También sirve abrir `dist/index.html` directo en el navegador, sin servidor. Tres modos de
-trabajo:
+También sirve abrir `dist/index.html` directo en el navegador, sin servidor.
+
+### Sitios cercanos
+
+La pestaña de entrada. Sin veredictos: se pega un listado de sitios y responde **qué hay
+alrededor de cada uno y a qué distancia** —red propia y los dos registros de SUBTEL— en una
+sola lista ordenada, con metros bajo el kilómetro. Cada fila trae registro de procedencia,
+operador, tipo de soporte con su altura, tecnologías y bandas. Exportable a CSV.
+
+Acepta los mismos formatos que el lote; una fila `A-B` consulta el entorno de **ambos**
+extremos. Las consultas repetidas se colapsan.
+
+Dos decisiones que cambian el resultado:
+
+- El tope de resultados es **por fuente**, no del total. Con un tope global, en zona urbana las
+  decenas de antenas de terceros desplazan a los sitios propios fuera del listado.
+- Una antena en servicio casi siempre está también autorizada, así que las dos entradas se
+  **fusionan** en una fila que declara ambos registros. Una fila marcada sólo `autorizada` es
+  obra permitida y no instalada, que para coubicación no es lo mismo.
+
+Desde cada fila se salta a la factibilidad: el botón del encabezado analiza el punto como
+sitio, y el botón «vano» lo carga como enlace A–B contra ese vecino.
+
+### Factibilidad
+
+Tres modos de trabajo:
 
 | Modo | Entrada | Qué responde |
 | --- | --- | --- |
@@ -47,7 +71,8 @@ trabajo:
 | **Enlace A–B** | dos extremos, con cotas propias si se tienen | balance completo del vano banda por banda, despeje sobre perfil de terreno y alternativas a cada extremo |
 | **Lote** | filas pegadas desde una planilla | una tabla con el veredicto de cada entrada, exportable a CSV |
 
-El formato de lote acepta, una fila por sitio o por enlace:
+El formato de lote —y también el de la pestaña de cercanos— acepta, una fila por sitio o por
+enlace:
 
 | Se pega | Se interpreta |
 | --- | --- |

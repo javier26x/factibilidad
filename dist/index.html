@@ -661,6 +661,21 @@ td.strong { font-weight: 600; }
   pointer-events: none;
   white-space: pre;
 }
+/* etiqueta de procedencia en el listado de cercanos */
+.etq {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.etq-propia { color: var(--mw); }
+.etq-servicio { color: var(--ok); }
+.etq-autorizadas { color: var(--ink-3); }
+
 /* controles de las capas SUBTEL, sobre el mapa */
 .capas-bar {
   display: flex;
@@ -829,14 +844,68 @@ td.strong { font-weight: 600; }
   </header>
 
   <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" data-view="analizar" aria-selected="true">Analizar</button>
+    <button class="tab" role="tab" data-view="cercanos" aria-selected="true">Sitios cercanos</button>
+    <button class="tab" role="tab" data-view="analizar" aria-selected="false">Factibilidad</button>
     <button class="tab" role="tab" data-view="red" aria-selected="false">Base de red</button>
     <button class="tab" role="tab" data-view="parametros" aria-selected="false">Parámetros</button>
     <button class="tab" role="tab" data-view="metodologia" aria-selected="false">Metodología</button>
   </nav>
 
+  <!-- ========================= SITIOS CERCANOS ========================= -->
+  <section class="view active" id="view-cercanos">
+    <div class="workspace">
+      <aside class="console">
+        <div class="field-group">
+          <div class="group-label">Sitios a consultar</div>
+          <textarea id="cerca-lista" rows="12" placeholder="06_109
+06_331
+13_272
+Bodega Lampa; -33.28617; -70.87233
+-34.65098; -71.19946"></textarea>
+          <p class="hint">Una fila por sitio. Código de la red, o coordenadas, o
+            <code>nombre; lat; lon</code>. Acepta grados decimales o <code>18°28'23.3"S</code>.</p>
+          <div id="cerca-errores" style="display:none"></div>
+        </div>
+
+        <div class="field-group">
+          <div class="group-label">Alcance</div>
+          <div class="row2">
+            <label class="field"><span>Radio (km)</span>
+              <input type="number" id="cerca-radio" value="5" min="0.1" max="100" step="0.5"></label>
+            <label class="field"><span>Máx. por sitio</span>
+              <input type="number" id="cerca-tope" value="25" min="1" max="200" step="1"></label>
+          </div>
+          <div class="group-label">Qué incluir</div>
+          <div id="cerca-fuentes" class="capas-toggles" style="flex-direction:column;align-items:stretch">
+            <label data-fuente="propia" data-activa="1">
+              <input type="checkbox" checked><span class="pip" style="background:var(--mw)"></span>Red propia (4.532)
+            </label>
+            <label data-fuente="servicio" data-activa="1">
+              <input type="checkbox" checked><span class="glifo">▲</span>SUBTEL en servicio (12.568)
+            </label>
+            <label data-fuente="autorizadas" data-activa="1">
+              <input type="checkbox" checked><span class="glifo">▽</span>SUBTEL autorizadas (16.901)
+            </label>
+          </div>
+          <p class="hint" id="cerca-estado"></p>
+        </div>
+
+        <div class="btnrow">
+          <button class="primary" id="cerca-buscar" style="flex:1">Buscar cercanos</button>
+          <button class="ghost" id="cerca-limpiar">Limpiar</button>
+        </div>
+        <div class="btnrow">
+          <button class="ghost" id="cerca-ejemplo">Cargar ejemplo</button>
+          <button class="ghost" id="cerca-csv">Exportar CSV</button>
+        </div>
+      </aside>
+
+      <div class="results" id="cerca-resultados"></div>
+    </div>
+  </section>
+
   <!-- ============================ ANALIZAR ============================ -->
-  <section class="view active" id="view-analizar">
+  <section class="view" id="view-analizar">
     <div class="workspace">
 
       <aside class="console">
@@ -1100,6 +1169,22 @@ Enlace PM; -41.46930; -72.94240; -41.32180; -72.98600
         siendo un margen, sólo que ahora encima de terreno medido y no de terreno plano
         supuesto. Y si tú cargas cotas a mano, mandan las tuyas: puedes conocer un edificio que
         el modelo no ve.</p>
+
+      <h2>Sitios cercanos</h2>
+      <p>La primera pestaña no emite ningún veredicto: responde qué hay alrededor de cada punto
+        y a qué distancia, en la red propia y en los dos registros de SUBTEL, en un solo listado
+        ordenado por distancia. Las distancias van en metros bajo el kilómetro. Cada fila lleva
+        de qué registro proviene, el operador, el tipo de soporte con su altura y las bandas.</p>
+      <p>Dos detalles que cambian lo que se ve. El tope de resultados se aplica <b>por fuente</b>
+        y no al total: con un tope global, en zona urbana las decenas de antenas de terceros
+        desplazan a los sitios propios fuera del listado, que es justo lo que no se quiere
+        perder. Y una antena en servicio casi siempre está también autorizada, así que las dos
+        entradas se fusionan en una fila que declara los dos registros; una fila marcada sólo
+        como <b>autorizada</b> es obra permitida y no instalada, que para efectos de coubicación
+        no es lo mismo.</p>
+      <p>Desde cualquier fila se salta a la factibilidad: el botón del encabezado analiza el
+        punto consultado como sitio, y el botón «vano» de cada fila lo carga como enlace A–B
+        contra ese vecino.</p>
 
       <h2>Fondos de Google</h2>
       <p>Los tres fondos de Google usan la Map Tiles API, que es la vía licenciada: exigen clave
@@ -2209,7 +2294,25 @@ const Capas = (function () {
     return 'OTROS';
   };
 
-  return { activar, datos, info, enVentana, ficha, marcaDe };
+  /**
+   * Emplazamientos dentro de un radio, ordenados por distancia. Se acota
+   * primero por caja envolvente —la banda de latitud es angosta para pocos
+   * kilómetros— y sólo dentro de ella se calcula la distancia real.
+   */
+  function cerca(d, lat, lon, radioKm, tope) {
+    const dLat = radioKm / 111.32;
+    const dLon = radioKm / (111.32 * Math.max(0.05, Math.cos(rad(lat))));
+    const idx = enVentana(d, lat - dLat, lat + dLat, lon - dLon, lon + dLon, 0);
+    const out = [];
+    for (const i of idx) {
+      const km = haversine(lat, lon, d.lat[i], d.lon[i]);
+      if (km <= radioKm) out.push({ i, km });
+    }
+    out.sort((a, b) => a.km - b.km);
+    return tope ? out.slice(0, tope) : out;
+  }
+
+  return { activar, datos, info, enVentana, cerca, ficha, marcaDe };
 })();
 
 /* =========================== 7. Mapa =========================== */
@@ -2912,6 +3015,7 @@ const ESTADO = {
   nodosFO: new Set(),
   orden: { col: 'km', asc: true },
   seleccion: 0,
+  cercanos: [],
   capas: { servicio: false, autorizadas: false },
   marcas: new Set(),                 // vacío = todas las marcas
 };
@@ -3041,6 +3145,305 @@ function ejecutar() {
   render();
   medirTendidos();
   medirPerfiles();
+}
+
+/* =========================== 8.b Sitios cercanos =========================== */
+
+/* Búsqueda por proximidad, sin veredicto de medio: responde qué hay alrededor y
+   a qué distancia, propio y de terceros. Es el primer paso de cualquier estudio
+   y por eso va antes que la factibilidad. */
+
+const FUENTES_CERCA = [
+  { id: 'propia', etiqueta: 'Red propia', corto: 'propia' },
+  { id: 'servicio', etiqueta: 'SUBTEL en servicio', corto: 'servicio' },
+  { id: 'autorizadas', etiqueta: 'SUBTEL autorizadas', corto: 'autorizada' },
+];
+
+/** Distancia en la unidad que se lee mejor: metros bajo el kilómetro. */
+function distTxt(km) {
+  return km < 1 ? `${fmt(km * 1000, 0)} m` : `${fmt(km, 2)} km`;
+}
+
+/**
+ * Consultas del listado pegado: acepta código de la red, coordenadas sueltas o
+ * nombre con coordenadas. Reutiliza el parseo del lote y se queda sólo con el
+ * punto, porque acá no hay enlaces que evaluar.
+ */
+function parsearConsultas(texto) {
+  const { filas, errores } = parsearLote(texto);
+  const consultas = [];
+  filas.forEach((f) => {
+    const rotulo = f.nombre || (f.ref ? f.ref.id : `${fmt(f.lat, 5)}, ${fmt(f.lon, 5)}`);
+    /* una fila con dos extremos se consulta por los dos: pegar «A-B» acá
+       significa querer ver el entorno de ambos, no sólo el de A */
+    if (f.latB != null) {
+      consultas.push({ nombre: f.refA ? f.refA.id : `${rotulo} · A`,
+                       lat: f.lat, lon: f.lon, ref: f.refA || null, linea: f.linea });
+      consultas.push({ nombre: f.refB ? f.refB.id : `${rotulo} · B`,
+                       lat: f.latB, lon: f.lonB, ref: f.refB || null, linea: f.linea });
+      return;
+    }
+    consultas.push({ nombre: rotulo, lat: f.lat, lon: f.lon, ref: f.ref || null, linea: f.linea });
+  });
+  /* el mismo punto pegado dos veces —suelto y dentro de un par A-B— se consulta
+     una sola vez: repetir el bloque idéntico sólo estorba */
+  const vistas = new Set();
+  const unicas = consultas.filter((c) => {
+    const k = `${c.lat.toFixed(5)},${c.lon.toFixed(5)}`;
+    if (vistas.has(k)) return false;
+    vistas.add(k);
+    return true;
+  });
+  return { consultas: unicas, repetidas: consultas.length - unicas.length, errores };
+}
+
+/**
+ * Vecinos de un punto en las fuentes pedidas.
+ *
+ * Dos cuidados que cambian el resultado:
+ *   - el tope se aplica por fuente y no al total; si no, en zona urbana las
+ *     decenas de antenas de terceros desplazan a los sitios propios fuera del
+ *     listado, que es justo lo que no se quiere perder;
+ *   - una antena en servicio casi siempre está también autorizada, así que las
+ *     dos entradas se fusionan en una sola fila que declara en qué registros
+ *     aparece. Una fila con sólo «autorizada» es obra permitida y no instalada.
+ */
+function cercanosDe(consulta, opciones) {
+  const { radioKm, tope, fuentes } = opciones;
+  const propias = [];
+  const terceras = new Map();
+
+  if (fuentes.has('propia')) {
+    const excluir = consulta.ref ? [consulta.ref.id] : [];
+    for (const { sitio, km } of vecinos(consulta.lat, consulta.lon, 400, excluir)) {
+      if (km > radioKm) break;                       // vecinos() ya viene ordenado
+      if (propias.length >= tope) break;
+      propias.push({
+        fuentes: ['propia'], km,
+        codigo: sitio.id, nombre: sitio.nombre, comuna: sitio.comuna,
+        marca: 'PROPIA', soporte: '', altura: sitio.alt || 0,
+        tec: TECH_BITS.filter(([, b]) => sitio.techMask & b).map(([t]) => t),
+        bandas: [], lat: sitio.lat, lon: sitio.lon, sitio,
+      });
+    }
+  }
+
+  for (const capa of ['servicio', 'autorizadas']) {
+    if (!fuentes.has(capa)) continue;
+    const d = Capas.datos(capa);
+    if (!d) continue;
+    for (const { i, km } of Capas.cerca(d, consulta.lat, consulta.lon, radioKm, 0)) {
+      /* el propio punto consultado aparece en el registro: no es un vecino */
+      if (km < 0.0005) continue;
+      const f = Capas.ficha(d, i);
+      /* código más posición redondeada: con el código igual y a menos de ~100 m
+         es el mismo emplazamiento en los dos registros */
+      const clave = `${f.sid || ''}|${f.lat.toFixed(3)}|${f.lon.toFixed(3)}`;
+      const ya = terceras.get(clave);
+      if (!ya) {
+        terceras.set(clave, {
+          fuentes: [capa], km,
+          codigo: f.sid, nombre: f.nombre, comuna: f.comuna,
+          marcas: new Set(f.marcas), soporte: f.soporte, altura: f.altura,
+          tec: new Set(f.tec), bandas: new Set(f.bandas), lat: f.lat, lon: f.lon,
+        });
+        continue;
+      }
+      if (!ya.fuentes.includes(capa)) ya.fuentes.push(capa);
+      f.marcas.forEach((m) => ya.marcas.add(m));
+      f.tec.forEach((t) => ya.tec.add(t));
+      f.bandas.forEach((x) => ya.bandas.add(x));
+      ya.altura = Math.max(ya.altura, f.altura);
+      ya.km = Math.min(ya.km, km);
+      if (f.nombre.length > (ya.nombre || '').length) ya.nombre = f.nombre;
+      if ((!ya.soporte || ya.soporte === 'Sin Info') && f.soporte) ya.soporte = f.soporte;
+      if (!ya.comuna && f.comuna) ya.comuna = f.comuna;
+    }
+  }
+
+  const deTerceros = [...terceras.values()]
+    .map((x) => Object.assign(x, {
+      marca: [...x.marcas].sort().join('/'),
+      tec: [...x.tec].sort((a, b) => TECNOLOGIAS_ORDEN.indexOf(a) - TECNOLOGIAS_ORDEN.indexOf(b)),
+      bandas: [...x.bandas].sort((a, b) => a - b),
+    }))
+    .sort((a, b) => a.km - b.km)
+    .slice(0, tope);
+
+  return [...propias, ...deTerceros].sort((a, b) => a.km - b.km);
+}
+
+const TECNOLOGIAS_ORDEN = ['2G', '3G', '4G', '5G'];
+
+function opcionesCerca() {
+  const fuentes = new Set($$('#cerca-fuentes label')
+    .filter((l) => l.querySelector('input').checked).map((l) => l.dataset.fuente));
+  return {
+    radioKm: Math.max(0.1, parseFloat($('#cerca-radio').value) || 5),
+    tope: Math.max(1, parseInt($('#cerca-tope').value, 10) || 25),
+    fuentes,
+  };
+}
+
+async function buscarCercanos() {
+  const { consultas, repetidas, errores } = parsearConsultas($('#cerca-lista').value);
+  const cajaErr = $('#cerca-errores');
+  cajaErr.style.display = errores.length ? 'block' : 'none';
+  cajaErr.innerHTML = errores.map((e) => `<p class="err">${esc(e)}</p>`).join('');
+  if (!consultas.length) {
+    $('#cerca-resultados').innerHTML = '';
+    avisarCerca('Nada que consultar: pega al menos un código o par de coordenadas.');
+    return;
+  }
+
+  const op = opcionesCerca();
+  /* las capas de terceros se piden acá aunque el mapa esté apagado: son parte
+     de la respuesta, no un adorno del mapa */
+  const faltan = ['servicio', 'autorizadas'].filter((c) => op.fuentes.has(c) && !Capas.datos(c));
+  if (faltan.length) {
+    avisarCerca('Cargando registros de SUBTEL…');
+    await Promise.all(faltan.map((c) => Capas.activar(c)));
+  }
+  const sinCapa = faltan.filter((c) => !Capas.datos(c));
+
+  ESTADO.cercanos = consultas.map((c) => ({ consulta: c, filas: cercanosDe(c, op), op }));
+  renderCercanos();
+
+  const total = ESTADO.cercanos.reduce((n, r) => n + r.filas.length, 0);
+  avisarCerca(`${total} sitios dentro de ${op.radioKm} km de ${consultas.length} consulta(s).` +
+    ` Tope de ${op.tope} por fuente.` +
+    (repetidas ? ` ${repetidas} consulta(s) repetida(s) se omitieron.` : '') +
+    (sinCapa.length
+      ? ` No se pudieron leer las capas SUBTEL (${sinCapa.join(', ')}): sólo se listó la red propia.`
+      : ''));
+}
+
+function avisarCerca(txt) {
+  const el = $('#cerca-estado');
+  if (el) el.textContent = txt;
+}
+
+function renderCercanos() {
+  const cont = $('#cerca-resultados');
+  if (!ESTADO.cercanos || !ESTADO.cercanos.length) { cont.innerHTML = ''; return; }
+
+  cont.innerHTML = ESTADO.cercanos.map((r, k) => {
+    const c = r.consulta;
+    const porFuente = FUENTES_CERCA.map((f) => {
+      const n = r.filas.filter((x) => x.fuentes.includes(f.id)).length;
+      return n ? `${n} ${f.etiqueta.toLowerCase()}` : null;
+    }).filter(Boolean).join(' · ') || 'ninguno';
+
+    return `<div class="panel">
+      <div class="panel-head">
+        <h3>${esc(c.nombre)}</h3>
+        <div class="spacer"></div>
+        <span class="hint">${fmt(c.lat, 5)}, ${fmt(c.lon, 5)} · ${porFuente}</span>
+        <button class="ghost" data-cerca-analizar="${k}">Analizar factibilidad</button>
+      </div>
+      ${r.filas.length ? `<div class="tablewrap"><table class="dense">
+        <thead><tr>
+          <th class="num">Dist.</th><th>Fuente</th><th>Operador</th><th>Código</th>
+          <th>Nombre</th><th>Comuna</th><th class="num">Az.</th>
+          <th>Soporte</th><th class="num">Alt.</th><th>Tec.</th><th>Bandas</th><th></th>
+        </tr></thead>
+        <tbody>${r.filas.map((x) => {
+          const az = azimut(c.lat, c.lon, x.lat, x.lon);
+          return `<tr>
+            <td class="num strong">${distTxt(x.km)}</td>
+            <td>${x.fuentes.map((id) => `<span class="etq etq-${id}">${
+              FUENTES_CERCA.find((f) => f.id === id).corto}</span>`).join(' ')}</td>
+            <td>${esc(x.marca)}</td>
+            <td class="strong">${esc(x.codigo || '—')}</td>
+            <td class="name">${esc(x.nombre || '—')}</td>
+            <td>${esc(x.comuna || '—')}</td>
+            <td class="num">${fmt(az, 0)}° ${rumbo(az)}</td>
+            <td>${esc(x.soporte || '—')}</td>
+            <td class="num">${x.altura ? fmt(x.altura, 0) : '—'}</td>
+            <td>${x.tec.length ? `<span class="techs">${
+              x.tec.map((t) => `<span class="on">${t}</span>`).join('')}</span>` : '—'}</td>
+            <td class="num">${x.bandas.length ? x.bandas.join('/') : '—'}</td>
+            <td><button class="ghost" data-cerca-vano='${esc(JSON.stringify({
+              an: c.nombre, al: c.lat, ao: c.lon,
+              bn: x.nombre || x.codigo, bl: x.lat, bo: x.lon,
+            }))}'>vano</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`
+      : `<div class="panel-body"><p class="hint">Sin sitios dentro de
+           ${r.op.radioKm} km.</p></div>`}
+    </div>`;
+  }).join('');
+
+  /* de un cercano al análisis: como sitio suelto o como vano contra él */
+  cont.querySelectorAll('[data-cerca-analizar]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const c = ESTADO.cercanos[Number(b.dataset.cercaAnalizar)].consulta;
+      setModo('sitio');
+      $('#nombre').value = c.nombre;
+      $('#lat').value = c.lat;
+      $('#lon').value = c.lon;
+      irA('analizar');
+      ejecutar();
+    });
+  });
+  cont.querySelectorAll('[data-cerca-vano]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const v = JSON.parse(b.dataset.cercaVano);
+      setModo('enlace');
+      $('#nombreA').value = v.an; $('#latA').value = v.al; $('#lonA').value = v.ao;
+      $('#nombreB').value = v.bn; $('#latB').value = v.bl; $('#lonB').value = v.bo;
+      irA('analizar');
+      ejecutar();
+    });
+  });
+}
+
+function cablearCercanos() {
+  $('#cerca-buscar').addEventListener('click', buscarCercanos);
+  $('#cerca-csv').addEventListener('click', exportarCercanos);
+  $('#cerca-limpiar').addEventListener('click', () => {
+    $('#cerca-lista').value = '';
+    $('#cerca-errores').style.display = 'none';
+    ESTADO.cercanos = [];
+    renderCercanos();
+    avisarCerca('');
+  });
+  $('#cerca-ejemplo').addEventListener('click', () => {
+    $('#cerca-lista').value = ['06_109', '06_331', '13_272',
+      'Bodega Lampa; -33.28617; -70.87233'].join('\n');
+    buscarCercanos();
+  });
+  /* Ctrl/Cmd+Enter para buscar sin soltar el teclado */
+  $('#cerca-lista').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); buscarCercanos(); }
+  });
+  $$('#cerca-fuentes label').forEach((lab) => {
+    lab.querySelector('input').addEventListener('change', (e) => {
+      lab.dataset.activa = e.target.checked ? 1 : 0;
+      if (ESTADO.cercanos.length) buscarCercanos();
+    });
+  });
+  [$('#cerca-radio'), $('#cerca-tope')].forEach((el) =>
+    el.addEventListener('change', () => { if (ESTADO.cercanos.length) buscarCercanos(); }));
+}
+
+function exportarCercanos() {
+  if (!ESTADO.cercanos || !ESTADO.cercanos.length) { toast('No hay resultados que exportar.'); return; }
+  const cab = ['consulta', 'consulta_lat', 'consulta_lon', 'fuente', 'operador', 'codigo',
+    'nombre', 'comuna', 'dist_m', 'dist_km', 'azimut', 'rumbo', 'soporte', 'altura_m',
+    'tecnologias', 'bandas_mhz', 'lat', 'lon'];
+  const filas = [];
+  ESTADO.cercanos.forEach(({ consulta: c, filas: fs }) => {
+    fs.forEach((x) => {
+      const az = azimut(c.lat, c.lon, x.lat, x.lon);
+      filas.push([c.nombre, dec(c.lat, 6), dec(c.lon, 6), x.fuentes.join('+'), x.marca, x.codigo,
+        x.nombre, x.comuna, Math.round(x.km * 1000), dec(x.km, 3), dec(az, 1), rumbo(az),
+        x.soporte, dec(x.altura, 0), x.tec.join('+'), x.bandas.join('+'),
+        dec(x.lat, 6), dec(x.lon, 6)]);
+    });
+  });
+  bajar('sitios_cercanos.csv', csv([cab, ...filas]));
 }
 
 /* ---- controles de las capas SUBTEL ---- */
@@ -4219,6 +4622,7 @@ function irA(id) {
   if (id === 'red') renderBase();
   if (id === 'parametros') renderParams();
   if (id === 'analizar') Mapa.pintar();
+  if (id === 'cercanos') $('#cerca-lista').focus();
 }
 
 const HINT_MODO = {
@@ -4352,7 +4756,8 @@ function arrancar() {
 
   Mapa.fijarFondo(ESTADO.params.fondo || 'carto');
   setModo('sitio');
-  irA('analizar');
+  cablearCercanos();
+  irA('cercanos');
   render();
 }
 
